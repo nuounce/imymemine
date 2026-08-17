@@ -2,8 +2,16 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- user-scalable=no + maximum-scale=1 : 더블탭 확대를 막는다. 조작 버튼을
+         두 번 두드리는 것이 확대로 해석되면 게임이 통째로 어긋난다. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>I.MY.ME.MINE — Fail now. Escape later.</title>
     <style>
       /* 외부 폰트·이미지 로드 금지(SPEC §0). 시스템 모노스페이스 스택만 쓴다. */
@@ -25,17 +33,34 @@
         width: 100%;
         height: 100%;
         overflow: hidden; /* 스크롤바 없음 */
+        /* 모바일 브라우저의 당겨서 새로고침 / 고무줄 스크롤. 조이스틱을 아래로
+           밀었을 때 페이지가 끌려오면 조작이 그대로 끊긴다. */
+        overscroll-behavior: none;
         background: var(--bg);
         color: var(--dim);
         font-family: var(--mono);
         -webkit-font-smoothing: antialiased;
+        /* 롱프레스 컨텍스트 메뉴 · 텍스트 선택 · 탭 하이라이트 전부 끈다.
+           초기화는 2초 홀드라서 롱프레스 메뉴가 뜨면 발동 자체가 불가능하다. */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
       }
 
-      /* 캔버스를 화면 중앙에 둔다. 정수배 스케일은 main.ts 가 계산해
-         canvas.style.width/height 에 픽셀로 써 넣는다. */
+      /* 캔버스를 화면 중앙에 둔다. 배율은 main.ts 가 계산해
+         canvas.style.width/height 에 픽셀로 써 넣는다.
+         노치·홈바가 조작 버튼을 먹지 않도록 안전 영역만큼 안쪽으로 들인다.
+         **padding 이 아니라 inset 을 쓴다** — `clientWidth` 는 padding 을 포함하므로
+         padding 으로 들이면 main.ts 가 실제보다 큰 폭을 재고 캔버스가 넘친다.
+         지원하지 않는 브라우저에서는 fallback 0px 로 예전과 같아진다. */
       #stage {
         position: fixed;
-        inset: 0;
+        top: env(safe-area-inset-top, 0px);
+        right: env(safe-area-inset-right, 0px);
+        bottom: env(safe-area-inset-bottom, 0px);
+        left: env(safe-area-inset-left, 0px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -56,6 +81,64 @@
         touch-action: none;
       }
 
+      /* 세로 모드 안내. 방 전체를 봐야 퍼즐이 성립하므로 세로 레이아웃은 만들지
+         않는다 — 대신 게임을 멈추고 돌려 달라고 말한다. main.ts 가 display 를 켠다. */
+      #rotate {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        padding: 32px;
+        text-align: center;
+        background: #050609;
+      }
+
+      #rotate .glyph {
+        width: 76px;
+        height: 116px;
+        border: 3px solid #6ce8ff;
+        border-radius: 12px;
+        animation: tip 2.4s ease-in-out infinite;
+      }
+
+      #rotate .glyph::after {
+        content: '';
+        display: block;
+        width: 26px;
+        height: 3px;
+        margin: 100px auto 0;
+        background: #6ce8ff;
+        opacity: 0.7;
+      }
+
+      @keyframes tip {
+        0%,
+        40% {
+          transform: rotate(0deg);
+        }
+        60%,
+        100% {
+          transform: rotate(-90deg);
+        }
+      }
+
+      #rotate .head {
+        font-size: 17px;
+        font-weight: 700;
+        color: #dfe6ff;
+        letter-spacing: 0.04em;
+      }
+
+      #rotate .sub {
+        font-size: 12px;
+        line-height: 1.8;
+        color: var(--dim);
+      }
+
       /* 캔버스를 못 얻었을 때만 보이는 최후 안내 (main.ts 가 채운다) */
       #fatal {
         position: fixed;
@@ -68,12 +151,21 @@
         font-size: 13px;
         line-height: 1.7;
         white-space: pre-wrap;
+        z-index: 20;
       }
     </style>
   </head>
   <body>
     <div id="stage">
       <canvas id="game" width="960" height="600"></canvas>
+    </div>
+    <div id="rotate">
+      <div class="glyph"></div>
+      <div class="head">기기를 가로로 돌려주세요</div>
+      <div class="sub">
+        방 전체가 한 화면에 들어와야 퍼즐이 성립합니다.<br />
+        돌리면 그 자리에서 이어집니다.
+      </div>
     </div>
     <div id="fatal"></div>
     <script type="module" src="/src/main.ts"></script>

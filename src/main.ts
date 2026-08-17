@@ -6,9 +6,15 @@
  * 틱 단위 순수 로직이며, 이 파일이 그 둘을 화면과 손가락에 연결한다.
  */
 import { createAudio } from './engine/audio';
-import { createInput, type MetaKey } from './engine/input';
+import { createInput, type Input, type MetaKey } from './engine/input';
 import { startLoop } from './engine/loop';
 import { createMic } from './engine/mic';
+import {
+  canvasPoint,
+  createTouch,
+  mergeInput,
+  type TouchContext,
+} from './engine/touch';
 import {
   beginOverwriteMode,
   commitLoop,
@@ -31,7 +37,12 @@ import {
   drawHud,
   drawPause,
   drawTitle,
+  drawTouchControls,
   drawTransition,
+  hitTest,
+  PAUSE_HITS,
+  setTouchUi,
+  TITLE_HITS,
 } from './render/hud';
 import {
   createIntro,
@@ -81,25 +92,125 @@ const g = ctx as CanvasRenderingContext2D;
 g.imageSmoothingEnabled = false;
 
 /**
- * 내부 해상도는 960×600 고정. 화면에는 **정수배**로만 키운다 —
- * 소수배 확대는 pixelated 렌더에서 픽셀 폭이 들쭉날쭉해진다.
- * 창이 960×600 보다 작을 때만 어쩔 수 없이 소수배로 축소한다.
+ * devicePixelRatio 상한. 모바일 GPU 에서 백버퍼를 무제한으로 곱하면
+ * (dpr 3~4 짜리 기기가 흔하다) 픽셀 수가 9~16배로 뛰어 프레임이 무너진다.
+ */
+const MAX_DPR = 2;
+
+const stageEl = document.getElementById('stage');
+
+/**
+ * 배율 계산의 기준. `#stage` 는 safe-area 만큼 **inset** 으로 들어와 있어
+ * (padding 이 아니다 — `clientWidth` 는 padding 을 포함한다) 노치·홈바 바깥의
+ * 실제 사용 가능 영역이 곧 이 요소의 크기다. 데스크톱에서는 inset 이 0 이라
+ * `window.innerWidth/Height` 와 같은 값이 된다.
+ */
+function viewportSize(): { w: number; h: number } {
+  const w = stageEl !== null && stageEl.clientWidth > 0 ? stageEl.clientWidth : window.innerWidth;
+  const h = stageEl !== null && stageEl.clientHeight > 0 ? stageEl.clientHeight : window.innerHeight;
+  return { w, h };
+}
+
+/**
+ * 백버퍼 크기 + 내부 좌표계 변환.
+ *
+ * **내부 좌표는 어떤 경우에도 960×600 이다** — 렌더 코드 전체가 그 좌표계에
+ * 의존하므로, 배율은 이 변환 하나로만 존재한다.
+ * `canvas.width` 대입은 컨텍스트 상태(변환·보간 설정)를 초기화하므로 그 뒤에 다시 세운다.
+ */
+function setBackbuffer(w: number, h: number): void {
+  if (cv.width !== w || cv.height !== h) {
+    cv.width = w;
+    cv.height = h;
+  }
+  g.setTransform(w / CANVAS_W, 0, 0, h / CANVAS_H, 0, 0);
+  g.imageSmoothingEnabled = false;
+}
+
+/**
+ * 내부 해상도 960×600 을 화면에 맞춘다.
+ *
+ * 화면이 960×600 이상이면 **예전 그대로**다: 백버퍼 960×600, 변환 없음, CSS 정수배 확대.
+ * 소수배 확대는 pixelated 렌더에서 픽셀 폭이 들쭉날쭉해지므로 데스크톱에서는 쓰지 않는다.
+ *
+ * 화면이 그보다 작으면(휴대폰 · 작은 창) 정수배가 애초에 존재하지 않는다. 이때는
+ * 비율을 지키며 소수배로 축소하고(letterbox 는 flex 중앙 정렬이 만든다), 백버퍼를
+ * dpr 배로 키워 선명도를 되찾는다.
  */
 function fitCanvas(): void {
-  const raw = Math.min(
-    window.innerWidth / CANVAS_W,
-    window.innerHeight / CANVAS_H,
-  );
-  const scale = raw >= 1 ? Math.floor(raw) : Math.max(0.2, raw);
-  cv.style.width = `${Math.round(CANVAS_W * scale)}px`;
-  cv.style.height = `${Math.round(CANVAS_H * scale)}px`;
+  const { w: vw, h: vh } = viewportSize();
+  const raw = Math.min(vw / CANVAS_W, vh / CANVAS_H);
+
+  if (raw >= 1) {
+    const scale = Math.floor(raw);
+    cv.style.width = `${CANVAS_W * scale}px`;
+    cv.style.height = `${CANVAS_H * scale}px`;
+    setBackbuffer(CANVAS_W, CANVAS_H);
+    return;
+  }
+
+  const scale = Math.max(0.05, raw);
+  const cssW = Math.max(1, Math.floor(CANVAS_W * scale));
+  const cssH = Math.max(1, Math.floor(CANVAS_H * scale));
+  cv.style.width = `${cssW}px`;
+  cv.style.height = `${cssH}px`;
+  const dpr = Math.min(MAX_DPR, Math.max(1, window.devicePixelRatio || 1));
+  setBackbuffer(Math.round(cssW * dpr), Math.round(cssH * dpr));
 }
 fitCanvas();
-window.addEventListener('resize', fitCanvas);
 
 // ── 런타임 ─────────────────────────────────────────────────────────────────
 
-const input = createInput();
+/** 터치 기기로 판정됐는가. 이 값이 true 일 때만 화면 조작 UI 가 존재한다. */
+let touchMode = false;
+
+const keyboard = createInput();
+const touch = createTouch({
+  canvas: cv,
+  onTouchDetected: (): void => {
+    touchMode = true;
+    setTouchUi(true);
+    onResize();
+  },
+});
+/**
+ * 터치와 키보드는 **같은 `InputMask` 경로**로 합쳐진다. 여기서 합친 뒤로는
+ * 어느 손가락이 만든 비트인지 시뮬이 알 방법이 없다 — 그게 결정론의 전제다.
+ */
+const input: Input = mergeInput(keyboard, touch);
+if (touch.isTouch()) {
+  touchMode = true;
+  setTouchUi(true);
+}
+
+// ── 세로 모드 게이트 ───────────────────────────────────────────────────────
+// 방 전체를 봐야 퍼즐이 성립하므로 세로 레이아웃은 만들지 않는다. 대신 회전을
+// 안내하고 그동안 **틱을 진행하지 않는다**(안내 화면 뒤에서 간수가 걸어오면 안 된다).
+
+const rotateEl = document.getElementById('rotate');
+let portraitBlocked = false;
+
+function updateOrientation(): void {
+  const { w, h } = viewportSize();
+  const blocked = touchMode && h > w;
+  if (blocked === portraitBlocked) return;
+  portraitBlocked = blocked;
+  if (rotateEl !== null) rotateEl.style.display = blocked ? 'flex' : 'none';
+  // 돌리는 동안 쌓인 엣지가 돌아온 순간 한꺼번에 터지면 안 된다.
+  input.flush();
+}
+
+function onResize(): void {
+  fitCanvas();
+  updateOrientation();
+}
+
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', onResize);
+// 모바일 브라우저는 주소창이 접힐 때 resize 가 아니라 이쪽만 쏘는 경우가 있다.
+window.visualViewport?.addEventListener('resize', onResize);
+onResize();
+
 const audio = createAudio();
 const mic = createMic();
 const view = createView();
@@ -349,38 +460,46 @@ if (!hasSeenIntro()) enterIntro();
 
 // ── 메타키 처리 ────────────────────────────────────────────────────────────
 
+/**
+ * `Enter` 와 "다음으로" 탭이 같은 동작을 하도록 한 곳에 모았다.
+ * 키보드와 손가락이 서로 다른 코드를 타면 반드시 한쪽이 뒤처진다.
+ */
+function startPressed(): void {
+  audio.resume();
+  switch (session.phase) {
+    case 'TITLE':
+      beginStage(0);
+      break;
+    case 'CLEAR':
+      nextStage(session);
+      session.resetHold = 0;
+      resetSfxEdges();
+      input.flush();
+      break;
+    case 'ALLCLEAR':
+      backToTitle();
+      break;
+    default:
+      break;
+  }
+}
+
+function togglePause(): void {
+  if (session.phase === 'PLAY' || session.phase === 'TRANSITION') {
+    session.paused = !session.paused;
+    session.resetHold = 0;
+  }
+}
+
 function handleMeta(): void {
   if (input.consumePressed('MUTE')) {
     audio.resume();
     audio.toggleMute();
   }
 
-  if (input.consumePressed('START')) {
-    audio.resume();
-    switch (session.phase) {
-      case 'TITLE':
-        beginStage(0);
-        break;
-      case 'CLEAR':
-        nextStage(session);
-        session.resetHold = 0;
-        resetSfxEdges();
-        input.flush();
-        break;
-      case 'ALLCLEAR':
-        backToTitle();
-        break;
-      default:
-        break;
-    }
-  }
+  if (input.consumePressed('START')) startPressed();
 
-  if (input.consumePressed('PAUSE')) {
-    if (session.phase === 'PLAY' || session.phase === 'TRANSITION') {
-      session.paused = !session.paused;
-      session.resetHold = 0;
-    }
-  }
+  if (input.consumePressed('PAUSE')) togglePause();
 
   if (session.phase !== 'PLAY' || session.paused) {
     // PLAY 밖에서 눌린 게임플레이 메타키는 버린다 — 나중에 뒤늦게 터지면 안 된다.
@@ -435,6 +554,85 @@ function handleMeta(): void {
   }
 }
 
+// ── 터치: 메뉴·오버레이 탭 ─────────────────────────────────────────────────
+//
+// 조이스틱·액션 패드는 `touch.ts` 안에서 곧바로 마스크/메타 엣지가 되므로 여기 없다.
+// 여기 오는 것은 **패드가 먹지 않은 탭**뿐이고, 전부 기존 키 경로와 같은 함수를 부른다.
+
+/** 지금 어떤 패드 묶음이 살아 있어야 하는가. 세션 상태에서 매 틱 결정한다. */
+function touchContext(): TouchContext {
+  if (session.phase !== 'PLAY' || session.paused) return 'NONE';
+  return session.awaitingOverwritePick ? 'PICK' : 'PLAY';
+}
+
+function handleTitleTap(x: number, y: number): void {
+  const id = hitTest(TITLE_HITS, x, y);
+  if (id === null) return;
+  audio.resume();
+  switch (id) {
+    case 'PLAY_MODE_0':
+    case 'PLAY_MODE_1':
+    case 'PLAY_MODE_2':
+      titleRow = 0;
+      pickTitleIndex(Number(id.slice(-1)));
+      break;
+    case 'DETECT_0':
+      titleRow = 1;
+      pickTitleIndex(0);
+      break;
+    case 'DETECT_1':
+      titleRow = 1;
+      pickTitleIndex(1);
+      break;
+    case 'INTRO':
+      enterIntro();
+      break;
+    case 'MUTE':
+      audio.toggleMute();
+      break;
+    case 'PLAY':
+      // 마이크는 이미 pointerdown(제스처) 에서 열렸다 — 여기서는 스테이지만 시작한다.
+      startPressed();
+      break;
+    default:
+      break;
+  }
+}
+
+function handlePauseTap(x: number, y: number): void {
+  const id = hitTest(PAUSE_HITS, x, y);
+  if (id === 'RESUME') togglePause();
+  else if (id === 'MUTE') {
+    audio.resume();
+    audio.toggleMute();
+  }
+}
+
+function handleTaps(): void {
+  const taps = touch.consumeTaps();
+  for (const t of taps) {
+    switch (session.phase) {
+      case 'INTRO':
+        leaveIntro();
+        return; // 페이즈가 바뀌었다. 남은 탭이 새 화면의 버튼을 누르면 안 된다.
+      case 'TITLE':
+        handleTitleTap(t.x, t.y);
+        break;
+      case 'PLAY':
+      case 'TRANSITION':
+        if (session.paused) handlePauseTap(t.x, t.y);
+        break;
+      case 'CLEAR':
+      case 'ALLCLEAR':
+        // 성적표는 아무 곳이나 탭하면 넘어간다 — ENTER 와 같은 경로.
+        startPressed();
+        return;
+      default:
+        break;
+    }
+  }
+}
+
 // ── 틱 / 렌더 ──────────────────────────────────────────────────────────────
 
 /**
@@ -455,7 +653,13 @@ function pumpMic(): boolean {
 }
 
 function onTick(): void {
+  // 세로 모드에서는 세계를 얼린다. 안내 화면 뒤에서 간수가 걸어오면 안 된다.
+  if (portraitBlocked) return;
+
   uiClock++;
+
+  touch.setContext(touchContext());
+  handleTaps();
 
   if (pumpMic()) return;
   if (micNoticeTimer > 0 && --micNoticeTimer === 0) micNotice = null;
@@ -511,6 +715,8 @@ function onTick(): void {
 }
 
 function onRender(): void {
+  if (portraitBlocked) return;
+
   const m = micView();
 
   switch (session.phase) {
@@ -528,6 +734,8 @@ function onRender(): void {
     case 'PLAY':
       drawWorld(g, session.sim, view);
       drawHud(g, session, m);
+      // 조작 UI 는 HUD 위, 일시정지 스크림 아래. 터치 기기에서만 존재한다.
+      if (touchMode) drawTouchControls(g, session, touch.view());
       if (session.paused) drawPause(g);
       break;
     case 'TRANSITION':
@@ -575,8 +783,24 @@ function drawMicNotice(ctx: CanvasRenderingContext2D, msg: string): void {
 
 // 첫 제스처에서 AudioContext 를 깨운다(브라우저 자동재생 정책).
 // 타이틀에서는 클릭만으로도 시작된다 — 메뉴 없이 즉시 플레이(SPEC §8).
-cv.addEventListener('pointerdown', () => {
+cv.addEventListener('pointerdown', (e) => {
   audio.resume();
+
+  if (e.pointerType === 'touch') {
+    // 터치에서는 화면 아무 곳이나 눌러 시작하지 않는다 — 모드 칩을 고르는 탭과
+    // 구분할 수 없기 때문이다. 인트로 스킵·메뉴 선택은 pointerup(탭)에서 처리한다:
+    // pointerdown 에서 페이즈를 바꾸면 곧 이어질 **그 손가락의 탭**이 새 화면의
+    // 버튼을 눌러 버린다.
+    //
+    // 다만 `getUserMedia` 는 제스처 안에서만 열 수 있으므로, PLAY 판을 누른
+    // 순간만은 여기서 마이크를 먼저 연다. 스테이지 시작은 탭 처리가 한다.
+    if (session.phase === 'TITLE' && session.mode === 'LISTEN') {
+      const p = canvasPoint(cv, e.clientX, e.clientY);
+      if (hitTest(TITLE_HITS, p.x, p.y) === 'PLAY') mic.start();
+    }
+    return;
+  }
+
   if (session.phase === 'INTRO') {
     leaveIntro();
     return;

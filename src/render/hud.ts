@@ -22,13 +22,26 @@ import {
   BODY_SUB,
   CANVAS_H,
   CANVAS_W,
+  INTERACT_RANGE,
   LOOP_TRANSITION_TICKS,
   MAX_AFTERIMAGES,
   MAX_TICKS,
   RESET_HOLD_TICKS,
   SLOT_NAMES,
   TICK_HZ,
+  TILE_SUB,
 } from '../sim/constants';
+import {
+  PICK_PADS,
+  PICK_PANEL,
+  STICK_DEAD_R,
+  STICK_R,
+  STICK_RUN_R,
+  TOUCH_PADS,
+  type PadId,
+  type TouchPad,
+  type TouchView,
+} from '../engine/touch';
 import {
   loadBest,
   runTotals,
@@ -48,6 +61,7 @@ import {
   C_CORPSE,
   C_DANGER,
   C_I_CORE,
+  C_I_RING,
   C_LAMP,
   C_LOOT,
   C_METAL_DARK,
@@ -90,6 +104,99 @@ const C_STRIPE = mulHex(C_LOOT, 0.66);
 
 const BAND_TOP_H = 50;
 const BAND_BOT_H = 40;
+
+// ── 터치 UI 스위치 ─────────────────────────────────────────────────────────
+//
+// 터치 기기에서만 켜진다. **꺼져 있는 동안 이 파일의 출력은 한 픽셀도 달라지지
+// 않는다** — 데스크톱 화면을 지키는 장치가 이 플래그 하나다. 새 코드는 전부
+// `if (touchUi)` 안에서만 그리거나, 삼항으로 기존 값을 그대로 되돌린다.
+
+let touchUi = false;
+
+/** main.ts 가 터치 기기를 판정한 순간 한 번 켠다. */
+export function setTouchUi(on: boolean): void {
+  touchUi = on;
+}
+
+// ── 탭 히트 영역 ───────────────────────────────────────────────────────────
+//
+// 메뉴/오버레이는 캔버스에 그려지므로 DOM 히트테스트가 없다. 그래서 **그리는 데
+// 쓰는 상수 그대로** 사각형을 내보내고 main.ts 가 탭 좌표를 그 위에 얹는다.
+// 손가락은 마우스보다 크므로 히트 영역은 보이는 칩보다 넉넉하다(칩 캡션 줄까지 덮는다).
+
+export interface HitRect {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * 타이틀의 세로 리듬. 각 줄은 칩(28) → 칩별 캡션(+12) → 설명 한 줄(+30) 을 쓴다.
+ * 그 아래 조작 안내(432) · PLAY(444) · 인트로(496) · 키 목록(524~) 순으로 내려간다.
+ * (TITLE_HITS 가 이 값들을 읽으므로 선언이 먼저 와야 한다 — TDZ.)
+ */
+const ROW1_Y = 288;
+const ROW2_Y = 356;
+const CHIP_H = 28;
+
+/** 플레이 방식 칩 한 줄의 기하. drawPlayModeRow 와 TITLE_HITS 가 공유한다. */
+const PM_CHIP_W = 176;
+const PM_GAP = 12;
+/** 감지 방식 칩 한 줄의 기하. */
+const DT_CHIP_W = 200;
+const DT_GAP = 16;
+
+const PLAY_BTN_W = 220;
+const PLAY_BTN_H = 36;
+const PLAY_BTN_Y = 444;
+
+/** 터치에서만 그려지는 두 버튼. 데스크톱의 키 목록 자리를 대신 쓴다. */
+const TOUCH_INTRO_BTN = { x: 268, y: 524, w: 200, h: 34 } as const;
+const TOUCH_MUTE_BTN = { x: 492, y: 524, w: 200, h: 34 } as const;
+
+function rowStartX(chipW: number, gap: number, count: number): number {
+  return (CANVAS_W - (chipW * count + gap * (count - 1))) / 2;
+}
+
+/** 타이틀의 탭 대상. id 는 main.ts 가 그대로 분기한다. */
+export const TITLE_HITS: readonly HitRect[] = [
+  ...[0, 1, 2].map((i) => ({
+    id: `PLAY_MODE_${i}`,
+    x: rowStartX(PM_CHIP_W, PM_GAP, 3) + i * (PM_CHIP_W + PM_GAP),
+    y: ROW1_Y - 8,
+    w: PM_CHIP_W,
+    h: CHIP_H + 24,
+  })),
+  ...[0, 1].map((i) => ({
+    id: `DETECT_${i}`,
+    x: rowStartX(DT_CHIP_W, DT_GAP, 2) + i * (DT_CHIP_W + DT_GAP),
+    y: ROW2_Y - 8,
+    w: DT_CHIP_W,
+    h: CHIP_H + 24,
+  })),
+  { id: 'PLAY', x: (CANVAS_W - PLAY_BTN_W) / 2 - 10, y: PLAY_BTN_Y - 6, w: PLAY_BTN_W + 20, h: PLAY_BTN_H + 12 },
+  { id: 'INTRO', ...TOUCH_INTRO_BTN },
+  { id: 'MUTE', ...TOUCH_MUTE_BTN },
+];
+
+const PAUSE_RESUME_BTN = { x: 260, y: 400, w: 200, h: 46 } as const;
+const PAUSE_MUTE_BTN = { x: 500, y: 400, w: 200, h: 46 } as const;
+
+/** 일시정지 화면의 탭 대상(터치 전용). */
+export const PAUSE_HITS: readonly HitRect[] = [
+  { id: 'RESUME', ...PAUSE_RESUME_BTN },
+  { id: 'MUTE', ...PAUSE_MUTE_BTN },
+];
+
+/** 점이 사각형 안인가. 경계는 포함한다. */
+export function hitTest(hits: readonly HitRect[], x: number, y: number): string | null {
+  for (const h of hits) {
+    if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) return h.id;
+  }
+  return null;
+}
 
 // ── 플레이 방식 문구 ───────────────────────────────────────────────────────
 // 두 축은 직교한다: 여기(플레이 방식)와 EASY/LISTEN(감지 방식)은 서로를 모른다.
@@ -940,6 +1047,10 @@ function drawSlots(ctx: CanvasRenderingContext2D, s: Session): void {
 }
 
 function drawOverwritePicker(ctx: CanvasRenderingContext2D, s: Session): void {
+  if (touchUi) {
+    drawTouchPicker(ctx, s);
+    return;
+  }
   const h = 96;
   const y = (CANVAS_H - h) / 2;
   plate(ctx, 0, y, CANVAS_W, h, 0.96, 0);
@@ -992,6 +1103,74 @@ function drawOverwritePicker(ctx: CanvasRenderingContext2D, s: Session): void {
 
   // 아래 사선 띠(4px)에 글자가 닿지 않도록 한 줄 위로 올린다.
   stencil(ctx, 'Q ▸ CANCEL', CANVAS_W / 2, y + h - 13, 9, C_STENCIL_DIM, 'center', 'normal');
+}
+
+/**
+ * 터치용 슬롯 선택. 명찰이 96×30 이면 손가락에 너무 작아서 옆 슬롯을 지운다 —
+ * 되돌릴 수 없는 조작이므로 여기서만은 판을 크게 키운다.
+ * 기하는 `PICK_PADS` / `PICK_PANEL` 하나뿐이다 — 그려지는 판이 곧 탭 영역이다.
+ */
+function drawTouchPicker(ctx: CanvasRenderingContext2D, s: Session): void {
+  scrim(ctx, 0.72);
+  const p = PICK_PANEL;
+  plate(ctx, p.x, p.y, p.w, p.h, 0.97);
+  hazard(ctx, p.x, p.y, p.w, 5);
+  hazard(ctx, p.x, p.y + p.h - 5, p.w, 5);
+  frame(ctx, p.x, p.y, p.w, p.h, C_LOOT, 0.55, 2);
+  rivets(ctx, p.x, p.y, p.w, p.h);
+
+  stencilBig(ctx, '지울 나를 고르시오', CANVAS_W / 2, p.y + 52, 22, C_LOOT, C_PLATE);
+  stencil(
+    ctx,
+    '고른 잔상의 테이프는 사라지고 이 루프를 다시 녹화한다 — 스테이지당 1회',
+    CANVAS_W / 2,
+    p.y + 74,
+    10,
+    C_STENCIL_DIM,
+    'center',
+    'normal',
+  );
+
+  for (const pad of PICK_PADS) {
+    if (pad.id === 'CANCEL') {
+      tapButton(ctx, pad, 'CANCEL', C_STENCIL_DIM);
+      continue;
+    }
+    const i = pad.id === 'SLOT1' ? 0 : pad.id === 'SLOT2' ? 1 : 2;
+    const ghost = s.ghosts[i];
+    const has = ghost !== undefined;
+    const col = C_SLOT[i + 1] ?? C_I_CORE;
+    if (has) {
+      plate(ctx, pad.x, pad.y, pad.w, pad.h);
+      ctx.fillStyle = withAlpha(col, 0.16);
+      ctx.fillRect(pad.x + 1, pad.y + 1, pad.w - 2, pad.h - 2);
+    } else {
+      ctx.fillStyle = C_PLATE_LO;
+      ctx.fillRect(pad.x, pad.y, pad.w, pad.h);
+    }
+    frame(ctx, pad.x, pad.y, pad.w, pad.h, has ? col : C_OFF, has ? 0.9 : 0.5, has ? 2 : 1);
+    rivets(ctx, pad.x, pad.y, pad.w, pad.h);
+    const nm = SLOT_NAMES[i + 1] ?? '?';
+    stencil(
+      ctx,
+      `${nm}${has && ghost.corpse ? ' ✕' : ''}`,
+      pad.cx,
+      pad.y + 48,
+      24,
+      has ? col : C_OFF,
+      'center',
+    );
+    stencil(
+      ctx,
+      has ? '탭해서 덮어쓰기' : '비어 있음',
+      pad.cx,
+      pad.y + 74,
+      10,
+      has ? C_STENCIL_DIM : C_OFF,
+      'center',
+      'normal',
+    );
+  }
 }
 
 /**
@@ -1048,14 +1227,6 @@ export interface TitleView {
   focusRow: 0 | 1;
   notice: string | null;
 }
-
-/**
- * 타이틀의 세로 리듬. 각 줄은 칩(28) → 칩별 캡션(+12) → 설명 한 줄(+30) 을 쓴다.
- * 그 아래 조작 안내(432) · PLAY(444) · 인트로(496) · 키 목록(524~) 순으로 내려간다.
- */
-const ROW1_Y = 288;
-const ROW2_Y = 356;
-const CHIP_H = 28;
 
 /** 타이틀 배경의 콘크리트 이음새. 시드에서 한 번 뽑는다 — 격자가 아니어야 한다. */
 let titleSeams: number[] | undefined;
@@ -1201,7 +1372,7 @@ export function drawTitle(
   drawDetectRow(ctx, mode, focusRow === 1);
   stencil(
     ctx,
-    '↑ ↓ 줄 이동    ← → 선택    ENTER 시작',
+    touchUi ? '탭해서 고르고   PLAY 로 시작' : '↑ ↓ 줄 이동    ← → 선택    ENTER 시작',
     CANVAS_W / 2,
     432,
     9,
@@ -1212,24 +1383,51 @@ export function drawTitle(
   // [ PLAY ] — 맥동하는 CTA. 메뉴는 없다(SPEC §8).
   // 발광 버튼이 아니라 **경고 사선을 두른 산업용 누름판**이다.
   const pulse = 0.65 + Math.sin(t * 0.06) * 0.35;
-  const btnW = 220;
-  const btnH = 36;
+  const btnW = PLAY_BTN_W;
+  const btnH = PLAY_BTN_H;
   const bx = (CANVAS_W - btnW) / 2;
-  const by = 444;
+  const by = PLAY_BTN_Y;
   plate(ctx, bx, by, btnW, btnH);
   hazard(ctx, bx + 1, by + 1, btnW - 2, 4, 0.5 + pulse * 0.5);
   hazard(ctx, bx + 1, by + btnH - 5, btnW - 2, 4, 0.5 + pulse * 0.5);
   frame(ctx, bx, by, btnW, btnH, C_EDGE, 0.3 + pulse * 0.4, 2);
   rivets(ctx, bx, by, btnW, btnH);
-  stencil(ctx, '[ PLAY ] — ENTER', CANVAS_W / 2, by + 24, 15, C_STENCIL, 'center');
+  stencil(
+    ctx,
+    touchUi ? '[ PLAY ]' : '[ PLAY ] — ENTER',
+    CANVAS_W / 2,
+    by + 24,
+    15,
+    C_STENCIL,
+    'center',
+  );
 
   // 인트로 재시청. main.ts 가 `S` keydown 을 받아 인트로로 되돌린다.
   // 플레이 방식 `STORY` 와 헷갈리지 않게 이름을 분리했다.
-  stencil(ctx, 'S ▸ 인트로 다시보기', CANVAS_W / 2, 496, 11, C_STENCIL_DIM, 'center');
+  if (!touchUi) {
+    stencil(ctx, 'S ▸ 인트로 다시보기', CANVAS_W / 2, 496, 11, C_STENCIL_DIM, 'center');
+  }
 
   // 마이크 폴백 같은 사건은 조용히 삼키지 않고 여기 한 줄로 남긴다.
   if (notice !== null) {
     stencil(ctx, notice, CANVAS_W / 2, 510, 10, C_DANGER, 'center');
+  }
+
+  if (touchUi) {
+    // 키 목록은 손가락에게 거짓 정보다. 그 자리에 실제로 누를 수 있는 두 판을 놓는다.
+    tapButton(ctx, TOUCH_INTRO_BTN, '인트로 다시보기', C_STENCIL_DIM);
+    tapButton(ctx, TOUCH_MUTE_BTN, '뮤트 켜기 / 끄기', C_STENCIL_DIM);
+    stencil(
+      ctx,
+      '왼쪽 = 이동 스틱 · 오른쪽 = COMMIT · 기기를 가로로 두세요',
+      CANVAS_W / 2,
+      576,
+      10,
+      withAlpha(C_STENCIL_DIM, 0.85),
+      'center',
+      'normal',
+    );
+    return;
   }
 
   // 조작키 요약 — 시설 벽에 붙은 안내판.
@@ -1250,6 +1448,243 @@ export function drawTitle(
     stencil(ctx, entry[0], cx, ry, 10, withAlpha(C_STRIPE, 0.95));
     text(ctx, entry[1], cx + 140, ry, 10, C_TEXT_DIM, 'left');
   });
+}
+
+/** 탭 대상임이 보이는 누름판. 히트 사각형과 **같은 좌표**로만 그린다. */
+function tapButton(
+  ctx: CanvasRenderingContext2D,
+  r: { x: number; y: number; w: number; h: number },
+  label: string,
+  col: string,
+): void {
+  plate(ctx, r.x, r.y, r.w, r.h);
+  frame(ctx, r.x, r.y, r.w, r.h, C_EDGE, 0.5);
+  rivets(ctx, r.x, r.y, r.w, r.h);
+  stencil(ctx, label, r.x + r.w / 2, r.y + r.h / 2 + 4, 11, col, 'center');
+}
+
+// ── 터치 조작 UI ───────────────────────────────────────────────────────────
+//
+// 같은 아트 방향을 따른다: 발광 오버레이가 아니라 **판에 박힌 산업용 조작기**다.
+// 다만 게임 정보를 가리면 안 되므로 판 자체는 반투명하게 깔고 테두리로만 형태를 세운다.
+
+/** 조작 UI 전체 불투명도. 방·잔상·간수를 읽는 데 방해가 되지 않는 선. */
+const TOUCH_A = 0.62;
+
+/**
+ * 지금 `E` 가 실제로 뭔가를 누를 수 있는가. **SimState 를 읽기만** 한다 —
+ * 판정 규칙은 world.ts `tryInteract` 와 같은 사거리를 쓴다(중심 대 타일 중심).
+ */
+function nearInteractable(s: Session): boolean {
+  const me = s.sim.bodies.find((b) => b.isLive);
+  if (me === undefined) return false;
+  const bx = me.x + BODY_SUB / 2;
+  const by = me.y + BODY_SUB / 2;
+  const max2 = INTERACT_RANGE * INTERACT_RANGE;
+  const near = (tx: number, ty: number): boolean => {
+    const dx = bx - (tx + TILE_SUB / 2);
+    const dy = by - (ty + TILE_SUB / 2);
+    return dx * dx + dy * dy <= max2;
+  };
+  for (const b of s.sim.buttons) if (near(b.x, b.y)) return true;
+  for (const l of s.sim.levers) if (near(l.x, l.y)) return true;
+  for (const q of s.sim.seqButtons) if (near(q.x, q.y)) return true;
+  return false;
+}
+
+/** 원형 패드 한 개. 눌린 동안 바탕이 밝아지고 테두리가 굵어진다. */
+function padCircle(
+  ctx: CanvasRenderingContext2D,
+  pad: TouchPad,
+  col: string,
+  down: boolean,
+  live: boolean,
+): void {
+  const a = TOUCH_A * (live ? 1 : 0.55);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(pad.cx, pad.cy, pad.r, 0, Math.PI * 2);
+  ctx.fillStyle = withAlpha(C_PLATE, (down ? 0.95 : 0.8) * a);
+  ctx.fill();
+  if (down) {
+    ctx.fillStyle = withAlpha(col, 0.3 * a);
+    ctx.fill();
+  }
+  ctx.strokeStyle = withAlpha(col, (down ? 1 : 0.75) * a);
+  ctx.lineWidth = down ? 3 : 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 원 안쪽만 남기고 경고 사선을 깐다 — `hazard` 는 사각형이라 클립이 필요하다. */
+function hazardArc(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rOuter: number,
+  rInner: number,
+  alpha: number,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+  ctx.arc(cx, cy, rInner, 0, Math.PI * 2, true);
+  ctx.clip('evenodd');
+  hazard(ctx, cx - rOuter, cy - rOuter, rOuter * 2, rOuter * 2, alpha);
+  ctx.restore();
+}
+
+/** 가상 조이스틱. 안쪽 원 = 걷기, 바깥 링 = 달리기. 그 구분이 곧 소음 여부다. */
+function drawStick(ctx: CanvasRenderingContext2D, v: TouchView): void {
+  const cx = v.baseX;
+  const cy = v.baseY;
+  const a = TOUCH_A * (v.stickActive ? 1 : 0.75);
+
+  // 달리기 밴드: 손을 대지 않았을 때도 사선으로 "여기가 위험 구간"임을 말한다.
+  hazardArc(ctx, cx, cy, STICK_R, STICK_RUN_R, (v.running ? 0.85 : 0.3) * a);
+
+  // 걷기 원 = 판에 파인 홈.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, STICK_RUN_R, 0, Math.PI * 2);
+  ctx.fillStyle = withAlpha(C_PLATE_LO, 0.9 * a);
+  ctx.fill();
+  ctx.strokeStyle = withAlpha(C_EDGE, 0.7 * a);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  // 바깥 링 테두리.
+  ctx.strokeStyle = withAlpha(v.running ? C_DANGER : C_EDGE, (v.running ? 1 : 0.6) * a);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, STICK_R, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 8방향 눈금 — 양자화가 8방향이라는 사실을 형태로 보여준다.
+  for (let i = 0; i < 8; i++) {
+    const ang = (i * Math.PI) / 4;
+    const c = Math.cos(ang);
+    const sn = Math.sin(ang);
+    ctx.strokeStyle = withAlpha(C_EDGE, 0.45 * a);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + c * (STICK_DEAD_R + 4), cy + sn * (STICK_DEAD_R + 4));
+    ctx.lineTo(cx + c * (STICK_RUN_R - 4), cy + sn * (STICK_RUN_R - 4));
+    ctx.stroke();
+  }
+
+  // 데드존 표식 — 이 안에서는 아무 방향도 나가지 않는다.
+  ctx.strokeStyle = withAlpha(C_EDGE, 0.35 * a);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, STICK_DEAD_R, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 노브.
+  const knobCol = v.running ? C_DANGER : v.mask !== 0 ? C_I_RING : C_METAL_LIP;
+  ctx.beginPath();
+  ctx.arc(v.knobX, v.knobY, 19, 0, Math.PI * 2);
+  ctx.fillStyle = withAlpha(C_PLATE, 0.96 * a);
+  ctx.fill();
+  ctx.strokeStyle = withAlpha(knobCol, 0.95 * a);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  stencil(
+    ctx,
+    v.running ? 'RUN' : 'WALK',
+    cx,
+    cy + STICK_R + 15,
+    10,
+    withAlpha(v.running ? C_DANGER : C_STENCIL_DIM, a + 0.2),
+    'center',
+  );
+}
+
+/**
+ * 화면 조작 버튼 + 조이스틱. PLAY 중에만, 그리고 슬롯 선택 오버레이가 떠 있지
+ * 않을 때만 그린다(그때는 화면 전체가 선택 패널이다).
+ */
+export function drawTouchControls(
+  ctx: CanvasRenderingContext2D,
+  s: Session,
+  v: TouchView,
+): void {
+  if (v.context !== 'PLAY') return;
+
+  const down = new Set<PadId>(v.down);
+  drawStick(ctx, v);
+
+  const hotE = nearInteractable(s);
+  const canQ = s.overwriteLeft > 0;
+
+  for (const pad of TOUCH_PADS) {
+    const pressed = down.has(pad.id);
+    switch (pad.id) {
+      case 'COMMIT': {
+        // 이 게임의 핵심 동작 — 가장 크고, 사선을 두르고, 두 줄 라벨을 갖는다.
+        padCircle(ctx, pad, C_LOOT, pressed, true);
+        hazardArc(ctx, pad.cx, pad.cy, pad.r - 3, pad.r - 9, (pressed ? 1 : 0.55) * TOUCH_A);
+        stencil(ctx, '잔상', pad.cx, pad.cy - 8, 13, C_STENCIL, 'center');
+        stencil(ctx, '남기기', pad.cx, pad.cy + 8, 13, C_STENCIL, 'center');
+        stencil(ctx, 'COMMIT', pad.cx, pad.cy + 24, 9, withAlpha(C_LOOT, 0.95), 'center');
+        break;
+      }
+      case 'INTERACT': {
+        // 사거리 안에 대상이 있을 때만 초록으로 살아난다 — 없을 때 눌러 봐야 소용없다.
+        padCircle(ctx, pad, hotE ? C_ON : C_EDGE, pressed, hotE);
+        stencil(
+          ctx,
+          'E',
+          pad.cx,
+          pad.cy + 2,
+          18,
+          withAlpha(hotE ? C_ON : C_STENCIL_DIM, hotE ? 1 : 0.8),
+          'center',
+        );
+        stencil(ctx, pad.sub, pad.cx, pad.cy + 20, 8, C_STENCIL_DIM, 'center', 'normal');
+        break;
+      }
+      case 'OVERWRITE': {
+        padCircle(ctx, pad, canQ ? C_LOOT : C_OFF, pressed, canQ);
+        stencil(
+          ctx,
+          'Q',
+          pad.cx,
+          pad.cy + 2,
+          16,
+          withAlpha(canQ ? C_LOOT : C_STENCIL_DIM, canQ ? 1 : 0.75),
+          'center',
+        );
+        stencil(ctx, canQ ? pad.sub : 'SPENT', pad.cx, pad.cy + 18, 8, C_STENCIL_DIM, 'center', 'normal');
+        break;
+      }
+      case 'RESET': {
+        padCircle(ctx, pad, C_DANGER, pressed, true);
+        // 2초 홀드 진행도를 버튼 자체에도 감는다 — 화면 중앙 다이얼과 같은 값이다.
+        const frac = Math.max(0, Math.min(1, s.resetHold / RESET_HOLD_TICKS));
+        if (frac > 0) {
+          ctx.strokeStyle = C_DANGER;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(pad.cx, pad.cy, pad.r - 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+          ctx.stroke();
+        }
+        stencil(ctx, pad.label, pad.cx, pad.cy + 5, 15, withAlpha(C_DANGER, 0.95), 'center');
+        break;
+      }
+      case 'PAUSE': {
+        padCircle(ctx, pad, C_EDGE, pressed, true);
+        ctx.fillStyle = withAlpha(C_STENCIL, 0.85);
+        ctx.fillRect(pad.cx - 5, pad.cy - 6, 3, 12);
+        ctx.fillRect(pad.cx + 2, pad.cy - 6, 3, 12);
+        break;
+      }
+      default:
+        break;
+    }
+  }
 }
 
 /** 포커스된 줄임을 알리는 왼쪽 삼각형. 어느 줄을 ← → 가 조작하는지가 한눈에 보여야 한다. */
@@ -1310,11 +1745,10 @@ function drawPlayModeRow(
   focused: boolean,
   t: number,
 ): void {
-  const chipW = 176;
-  const gap = 12;
+  const chipW = PM_CHIP_W;
+  const gap = PM_GAP;
   const list: PlayMode[] = ['STORY', 'GAUNTLET', 'TIME_ATTACK'];
-  const total = chipW * list.length + gap * (list.length - 1);
-  const startX = (CANVAS_W - total) / 2;
+  const startX = rowStartX(chipW, gap, list.length);
 
   if (focused) drawRowCaret(ctx, startX - 22, ROW1_Y + CHIP_H / 2, t);
 
@@ -1355,11 +1789,10 @@ function drawDetectRow(
   mode: Mode,
   focused: boolean,
 ): void {
-  const chipW = 200;
-  const gap = 16;
+  const chipW = DT_CHIP_W;
+  const gap = DT_GAP;
   const list: Mode[] = ['EASY', 'LISTEN'];
-  const total = chipW * list.length + gap;
-  const startX = (CANVAS_W - total) / 2;
+  const startX = rowStartX(chipW, gap, list.length);
 
   if (focused) drawRowCaret(ctx, startX - 22, ROW2_Y + CHIP_H / 2, 0);
 
@@ -1698,7 +2131,43 @@ function drawSplits(
 export function drawPause(ctx: CanvasRenderingContext2D): void {
   scrim(ctx, 0.82);
   stencilBig(ctx, 'PAUSED', CANVAS_W / 2, 150, 34, C_STENCIL, withAlpha(C_BG, 0.82));
-  stencil(ctx, 'ESC ▸ RESUME', CANVAS_W / 2, 176, 11, C_STENCIL_DIM, 'center', 'normal');
+  stencil(
+    ctx,
+    touchUi ? 'RESUME 를 탭하세요' : 'ESC ▸ RESUME',
+    CANVAS_W / 2,
+    176,
+    11,
+    C_STENCIL_DIM,
+    'center',
+    'normal',
+  );
+
+  if (touchUi) {
+    // 손가락에게는 키 이름이 아니라 화면 어디를 누르는지가 정보다.
+    const touchRows: [string, string][] = [
+      ['왼쪽 스틱', '이동 — 바깥 링까지 밀면 달리기(소음)'],
+      ['COMMIT', '루프 조기 확정 → 지금까지의 나를 잔상으로'],
+      ['E / Q', '상호작용 / 잔상 덮어쓰기 (스테이지당 1회)'],
+      ['⟲ 2초 홀드', '스테이지 전체 초기화 — DEBT +1'],
+    ];
+    touchRows.forEach((r, i) => {
+      const y = 232 + i * 26;
+      stencil(ctx, r[0], CANVAS_W / 2 - 250, y, 12, withAlpha(C_STRIPE, 0.95));
+      text(ctx, r[1], CANVAS_W / 2 - 110, y, 11, C_TEXT_DIM, 'left');
+    });
+    tapButton(ctx, PAUSE_RESUME_BTN, 'RESUME', C_STENCIL);
+    tapButton(ctx, PAUSE_MUTE_BTN, '뮤트 켜기 / 끄기', C_STENCIL_DIM);
+    text(
+      ctx,
+      '잔상은 궤적이 아니라 입력 테이프다. 매 루프 세계는 틱 0으로 되감기고, 과거의 나는 같은 키를 다시 누른다.',
+      CANVAS_W / 2,
+      CANVAS_H - 46,
+      10,
+      C_TEXT_DIM,
+      'center',
+    );
+    return;
+  }
 
   const rows: [string, string][] = [
     ['WASD / ARROWS', '이동'],
