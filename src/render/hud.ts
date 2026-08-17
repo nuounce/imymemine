@@ -3,6 +3,20 @@
  *
  * 이 게임의 HUD는 장식이 아니라 **자원 표시기**다. 남은 시간·남은 몸·남은
  * 덮어쓰기·누적 부채가 곧 전략의 입력값이라, 넷 다 항상 화면에 있어야 한다.
+ *
+ * **아트 방향: 홀로그램이 아니라 시설 표지판이다.** 세계가 콘크리트 지하 시설이므로
+ * 정보도 공중에 떠 있는 SF 인터페이스가 아니라 **벽에 붙은 강철 표지판·스텐실 도장·
+ * 산업용 계기**로 보여야 한다. 그래서 이 파일에는 세 가지 규칙이 있다:
+ *
+ * 1. 밴드·패널은 **불투명**하다. 반투명 발광 패널은 즉시 홀로그램으로 읽힌다.
+ * 2. 테두리는 발광하지 않는다 — 금속 모서리에 조명이 걸린 1px 하이라이트뿐이다.
+ * 3. 위험 정보(DEBT / ALERTS / 남은 시간 부족 / 남은 몸 0)는 **경고 사선**으로 말한다.
+ *
+ * 단 색은 새로 발명하지 않는다: 전부 `palette.ts` 의 콘크리트·강철·조명 토큰에서
+ * 파생시킨다. 잔상 4색(C_SLOT)은 정체성 시스템이라 그대로 둔다.
+ *
+ * 그리고 **가독성이 분위기보다 우선한다.** 저채도로 내려가도 명도는 내리지 않는다 —
+ * 스텐실 라벨은 글자 뒤에 어두운 잉크 헤일로를 깔아 얼룩진 판 위에서도 대비를 지킨다.
  */
 import {
   BODY_SUB,
@@ -34,20 +48,48 @@ import {
   C_CORPSE,
   C_DANGER,
   C_I_CORE,
-  C_I_RING,
+  C_LAMP,
   C_LOOT,
+  C_METAL_DARK,
+  C_METAL_LIP,
   C_OFF,
   C_ON,
-  C_PANEL,
+  C_RUST,
+  C_SEAM,
+  C_SEAM_LIP,
   C_SLOT,
   C_TEXT,
   C_TEXT_DIM,
+  C_VOID,
   font,
   MONO,
+  mulHex,
   withAlpha,
 } from './palette';
 
 const PAD = 14;
+
+// ── 표지판 자재 (전부 palette 토큰에서 파생) ───────────────────────────────
+
+/** 표지판 강철판. 불투명하게 칠할 때의 바탕. */
+const C_PLATE = mulHex(C_METAL_DARK, 0.78);
+/** 판에 파인 홈(계기 트랙·비어 있는 명찰). 판보다 어두워야 "파였다"로 읽힌다. */
+const C_PLATE_LO = mulHex(C_METAL_DARK, 0.5);
+/** 모서리에 걸린 빛 한 줄. **발광이 아니다** — 금속 립(C_METAL_LIP)을 그대로 쓴다. */
+const C_EDGE = C_METAL_LIP;
+/** 스텐실 도장 흰색 = 형광등 색. 저채도인데 명도가 높아 가독성을 안 깎는다. */
+const C_STENCIL = C_LAMP;
+/** 보조 라벨용 스텐실. 판 위에서 여전히 4:1 이상 대비가 남는 선까지만 내렸다. */
+const C_STENCIL_DIM = mulHex(C_LAMP, 0.58);
+/**
+ * 경고 사선의 노랑. 세계의 셔터 도색(C_HAZARD)은 조명 밖 금속이라 더 어둡고,
+ * CORE 금색(C_LOOT)은 화면에서 유일한 "주목물"이라 더 밝다. HUD 사선은 그 사이 —
+ * 산업 현장의 노랑으로 읽히되 CORE 의 자리를 다투지 않는다.
+ */
+const C_STRIPE = mulHex(C_LOOT, 0.66);
+
+const BAND_TOP_H = 50;
+const BAND_BOT_H = 40;
 
 // ── 플레이 방식 문구 ───────────────────────────────────────────────────────
 // 두 축은 직교한다: 여기(플레이 방식)와 EASY/LISTEN(감지 방식)은 서로를 모른다.
@@ -107,6 +149,275 @@ function scrim(ctx: CanvasRenderingContext2D, alpha: number): void {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }
 
+// ── 시드 고정 질감 ─────────────────────────────────────────────────────────
+//
+// 거친 결은 **프레임마다 뽑지 않는다.** `Math.random()` 을 매 프레임 부르면 표지판이
+// TV 노이즈처럼 지직거린다. 아래 값은 고정 시드에서 한 번 만들어 계속 재사용한다.
+
+/** 렌더 전용 시드 난수(mulberry32). 시뮬은 이 함수를 절대 부르지 않는다. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const WEAR_TILE = 64;
+let wearTile: HTMLCanvasElement | undefined;
+let wearPat: CanvasPattern | undefined;
+let wearCtx: CanvasRenderingContext2D | undefined;
+
+/**
+ * 도장면의 마모 반점 타일. 2px 알갱이에 문턱을 줘서 드문드문 박히게 만든다 —
+ * 문턱이 없으면 모든 픽셀이 흔들려 강철판이 아니라 노이즈가 된다.
+ */
+function wearPattern(ctx: CanvasRenderingContext2D): CanvasPattern | undefined {
+  if (wearTile === undefined) {
+    if (typeof document === 'undefined') return undefined;
+    const cv = document.createElement('canvas');
+    cv.width = WEAR_TILE;
+    cv.height = WEAR_TILE;
+    const g = cv.getContext('2d');
+    if (g === null) return undefined;
+    const img = g.createImageData(WEAR_TILE, WEAR_TILE);
+    const rnd = seeded(0x1f2e3d4c);
+    const cells = WEAR_TILE / 2;
+    const noise = new Float64Array(cells * cells);
+    for (let i = 0; i < noise.length; i++) noise[i] = rnd();
+    for (let y = 0; y < WEAR_TILE; y++) {
+      for (let x = 0; x < WEAR_TILE; x++) {
+        const v = noise[(y >> 1) * cells + (x >> 1)] ?? 0.5;
+        const p = (y * WEAR_TILE + x) * 4;
+        // 무채색 반점 — 어떤 색 위에 얹어도 색조를 밀지 않는다.
+        const lum = v > 0.5 ? 255 : 0;
+        img.data[p] = lum;
+        img.data[p + 1] = lum;
+        img.data[p + 2] = lum;
+        const mag = Math.abs(v - 0.5) * 2;
+        img.data[p + 3] = mag <= 0.72 ? 0 : 200;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    wearTile = cv;
+  }
+  if (wearPat === undefined || wearCtx !== ctx) {
+    const p = ctx.createPattern(wearTile, 'repeat');
+    if (p === null) return undefined;
+    wearPat = p;
+    wearCtx = ctx;
+  }
+  return wearPat;
+}
+
+/** 판 위에 마모 반점을 얹는다. 패턴은 캔버스 원점에 고정이라 스크롤하지 않는다. */
+function wear(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  alpha: number,
+): void {
+  const p = wearPattern(ctx);
+  if (p === undefined) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = p;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+/** 밴드에 흘러내린 녹물 자국. 시드에서 한 번 뽑아 계속 같은 자리에 쓴다. */
+let streaks: number[] | undefined;
+function streakData(): number[] {
+  if (streaks === undefined) {
+    const rnd = seeded(0x6b1e2f07);
+    const out: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      out.push(Math.round(rnd() * CANVAS_W), 2 + Math.round(rnd() * 4), 4 + Math.round(rnd() * 11));
+    }
+    streaks = out;
+  }
+  return streaks;
+}
+
+/** 밴드의 한쪽 모서리에서 번져 나온 녹물. 글자보다 먼저 그려 대비를 깎지 않는다. */
+function bandGrime(
+  ctx: CanvasRenderingContext2D,
+  y: number,
+  h: number,
+  fromTop: boolean,
+): void {
+  const st = streakData();
+  ctx.fillStyle = withAlpha(C_RUST, 0.16);
+  for (let i = 0; i < st.length; i += 3) {
+    const sx = st[i] ?? 0;
+    const sw = st[i + 1] ?? 2;
+    const sh = Math.min(h, st[i + 2] ?? 6);
+    ctx.fillRect(sx, fromTop ? y : y + h - sh, sw, sh);
+  }
+}
+
+// ── 표지판 원시 도형 ───────────────────────────────────────────────────────
+
+/**
+ * 표지판 강철판. **불투명하다** — 반투명하게 두면 다시 홀로그램으로 읽힌다.
+ * `edge` 는 위쪽 모서리에 걸린 빛 한 줄의 세기(0 이면 생략).
+ */
+function plate(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  alpha = 1,
+  edge = 0.26,
+): void {
+  ctx.fillStyle = withAlpha(C_PLATE, alpha);
+  ctx.fillRect(x, y, w, h);
+  wear(ctx, x, y, w, h, 0.05 * alpha);
+  if (edge > 0) {
+    ctx.fillStyle = withAlpha(C_EDGE, edge * alpha);
+    ctx.fillRect(x, y, w, 1);
+    ctx.fillStyle = withAlpha(C_BG, 0.45 * alpha);
+    ctx.fillRect(x, y + h - 1, w, 1);
+  }
+}
+
+/** 투박한 실선 테두리. 발광하지 않는다 — 필요한 곳에만. */
+function frame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+  alpha: number,
+  lw = 1,
+): void {
+  ctx.strokeStyle = withAlpha(color, alpha);
+  ctx.lineWidth = lw;
+  const o = lw / 2;
+  ctx.strokeRect(x + o, y + o, w - lw, h - lw);
+}
+
+/** 명찰을 판에 고정한 리벳 두 개. 1px 점 두 개로 "붙여 놓은 판"이 된다. */
+function rivets(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  ctx.fillStyle = withAlpha(C_EDGE, 0.4);
+  ctx.fillRect(x + 2, y + 2, 1, 1);
+  ctx.fillRect(x + w - 3, y + h - 3, 1, 1);
+}
+
+/**
+ * 경고 사선. 노랑/검정 대각선은 산업 현장의 언어다 — 위험 정보에만 쓴다.
+ * 사선 위에 글자를 얹지 않는다(대비가 무너진다). 띠·게이지 채움으로만 쓴다.
+ */
+function hazard(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  alpha = 1,
+): void {
+  if (w <= 0 || h <= 0) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.fillStyle = withAlpha(C_STRIPE, alpha);
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = withAlpha(C_BG, alpha * 0.9);
+  const step = 12;
+  for (let i = -h; i < w + h; i += step) {
+    ctx.beginPath();
+    ctx.moveTo(x + i, y + h);
+    ctx.lineTo(x + i + h, y);
+    ctx.lineTo(x + i + h + step / 2, y);
+    ctx.lineTo(x + i + step / 2, y + h);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * 위치를 시드로 한 0/1px 어긋남.
+ *
+ * 스텐실은 사람이 손으로 대고 찍은 것이라 줄이 딱 맞지 않는다. 단 **값이 아니라
+ * 위치**를 시드로 써야 한다 — 문자열을 시드로 쓰면 `DEBT 3` → `DEBT 4` 에서
+ * 글자가 튄다.
+ */
+function skew(x: number, y: number): number {
+  const h = Math.imul(((x | 0) * 73856093) ^ ((y | 0) * 19349663), 0x85ebca6b);
+  return (h >>> 30) & 1;
+}
+
+/**
+ * 스텐실 도장 라벨.
+ *
+ * 글자 뒤에 어두운 잉크 헤일로를 깔아 **얼룩진 판·녹물 자국 위에서도** 명도 대비를
+ * 지킨다. 저채도로 내려가면서 가독성을 잃지 않는 장치가 이 헤일로다.
+ */
+function stencil(
+  ctx: CanvasRenderingContext2D,
+  str: string,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  align: CanvasTextAlign = 'left',
+  weight: 'normal' | 'bold' = 'bold',
+): void {
+  const dy = skew(x, y);
+  ctx.font = font(size, weight);
+  ctx.textAlign = align;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = withAlpha(C_BG, 0.82);
+  ctx.fillText(str, x + 1, y + dy + 1);
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y + dy);
+}
+
+/**
+ * 큰 글자용 스텐실. 도장판의 **브리지**(글자를 잇느라 남는 틈) 두 줄을 배경색으로
+ * 눌러 실제로 형판을 대고 찍은 것처럼 만든다. `cut` 은 반드시 **그 자리의 배경색**
+ * 이어야 한다 — 아니면 글자를 가로지르는 밝은 줄이 생긴다.
+ */
+function stencilBig(
+  ctx: CanvasRenderingContext2D,
+  str: string,
+  cx: number,
+  y: number,
+  size: number,
+  color: string,
+  cut: string,
+): void {
+  ctx.font = font(size, 'bold');
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const w = ctx.measureText(str).width;
+  ctx.fillStyle = withAlpha(C_BG, 0.8);
+  ctx.fillText(str, cx + 2, y + 2);
+  ctx.fillStyle = color;
+  ctx.fillText(str, cx, y);
+  // 브리지는 얇아야 한다 — 글자 높이의 1/20 을 넘기면 글자가 끊겨 읽힌다.
+  const lw = Math.max(1, Math.round(size / 22));
+  ctx.fillStyle = cut;
+  ctx.fillRect(cx - w / 2 - 2, y - size * 0.46, w + 4, lw);
+  ctx.fillRect(cx - w / 2 - 2, y - size * 0.16, w + 4, lw);
+}
+
 // ── 인게임 HUD ─────────────────────────────────────────────────────────────
 
 export function drawHud(
@@ -116,19 +427,28 @@ export function drawHud(
 ): void {
   ctx.textBaseline = 'alphabetic';
 
-  // 상단/하단 밴드 — 월드와 HUD 를 시각적으로 분리한다.
-  ctx.fillStyle = withAlpha(C_PANEL, 0.82);
-  ctx.fillRect(0, 0, CANVAS_W, 50);
-  ctx.fillRect(0, CANVAS_H - 40, CANVAS_W, 40);
-  ctx.fillStyle = withAlpha(C_I_RING, 0.12);
-  ctx.fillRect(0, 50, CANVAS_W, 1);
-  ctx.fillRect(0, CANVAS_H - 41, CANVAS_W, 1);
+  // 상단/하단 밴드 — 벽에 볼트로 박아 놓은 불투명 강철 띠.
+  // 위아래 경계는 발광선이 아니라 모서리에 걸린 빛 한 줄 + 그 아래 그림자다.
+  plate(ctx, 0, 0, CANVAS_W, BAND_TOP_H, 1, 0);
+  bandGrime(ctx, 0, BAND_TOP_H, false);
+  ctx.fillStyle = withAlpha(C_EDGE, 0.3);
+  ctx.fillRect(0, BAND_TOP_H - 1, CANVAS_W, 1);
+  ctx.fillStyle = withAlpha(C_BG, 0.75);
+  ctx.fillRect(0, BAND_TOP_H, CANVAS_W, 2);
+
+  const by = CANVAS_H - BAND_BOT_H;
+  plate(ctx, 0, by, CANVAS_W, BAND_BOT_H, 1, 0);
+  bandGrime(ctx, by, BAND_BOT_H, true);
+  ctx.fillStyle = withAlpha(C_EDGE, 0.3);
+  ctx.fillRect(0, by, CANVAS_W, 1);
+  ctx.fillStyle = withAlpha(C_BG, 0.75);
+  ctx.fillRect(0, by - 2, CANVAS_W, 2);
 
   // ── 상단 좌: 스테이지 / par ──
   // 이어서 하는 모드(GAUNTLET/TIME_ATTACK)에서는 스테이지 번호가 곧 런 진행도다.
   const stageNo = s.stageIndex + 1;
   const runMode = s.playMode !== 'STORY';
-  text(
+  stencil(
     ctx,
     runMode
       ? `STAGE ${stageNo} / ${STAGES.length} — ${s.level.name.toUpperCase()}`
@@ -136,24 +456,23 @@ export function drawHud(
     PAD,
     22,
     13,
-    C_TEXT,
-    'left',
-    'bold',
+    C_STENCIL,
   );
   const used = s.ghosts.length;
-  text(
+  const overPar = used > s.level.par;
+  stencil(
     ctx,
     `PAR ${s.level.par}   AFTERIMAGES ${used}/${MAX_AFTERIMAGES}`,
     PAD,
     38,
     10,
-    used > s.level.par ? C_DANGER : C_TEXT_DIM,
+    overPar ? C_DANGER : C_STENCIL_DIM,
   );
 
-  // ── 상단 중앙: 60초 게이지 + R ▸ COMMIT ──
+  // ── 상단 중앙: 60초 계기 + R ▸ COMMIT ──
   drawTimeGauge(ctx, s);
 
-  // ── 상단 우: 슬롯 인디케이터 ──
+  // ── 상단 우: 슬롯 명찰 ──
   drawSlots(ctx, s);
 
   // ── 상단 중앙 아래: 지금의 목표 ──
@@ -162,46 +481,29 @@ export function drawHud(
 
   // ── 하단 좌: OVERWRITE ──
   const owFull = s.overwriteLeft > 0;
-  text(
+  // 다 쓴 상태에서 라벨을 C_OFF 로 두면 판 위에서 1.8:1 밖에 안 나 **읽히지 않는다.**
+  // "없음"은 ○ 표식과 옆의 `SPENT` 가 말한다 — 글자 자체는 명도를 지킨다.
+  stencil(
     ctx,
     `OVERWRITE ${owFull ? '●' : '○'}`,
     PAD,
     CANVAS_H - 16,
-    11,
-    owFull ? C_ON : C_OFF,
-    'left',
-    'bold',
+    12,
+    owFull ? C_ON : C_STENCIL_DIM,
   );
-  text(
+  stencil(
     ctx,
     owFull ? 'Q ▸ REWRITE A SELF' : 'SPENT',
-    PAD + 128,
+    PAD + 134,
     CANVAS_H - 16,
     9,
-    C_TEXT_DIM,
+    C_STENCIL_DIM,
   );
 
-  // ── 하단 우: DEBT / ALERTS ──
-  text(
-    ctx,
-    `ALERTS ${s.alerts}`,
-    CANVAS_W - PAD - 132,
-    CANVAS_H - 16,
-    11,
-    s.alerts > 0 ? C_LOOT : C_TEXT_DIM,
-    'left',
-    'bold',
-  );
-  text(
-    ctx,
-    `DEBT ${s.debt}`,
-    CANVAS_W - PAD,
-    CANVAS_H - 16,
-    11,
-    s.debt > 0 ? C_DANGER : C_TEXT_DIM,
-    'right',
-    'bold',
-  );
+  // ── 하단 우: ALERTS / DEBT ──
+  // 둘 다 위험 수치라 0 을 넘기면 밑에 경고 사선 띠가 깔린다.
+  drawWarnStat(ctx, `ALERTS ${s.alerts}`, CANVAS_W - PAD - 132, 'left', s.alerts > 0, C_LOOT);
+  drawWarnStat(ctx, `DEBT ${s.debt}`, CANVAS_W - PAD, 'right', s.debt > 0, C_DANGER);
 
   // ── LISTEN 배지 + 음량 미터 ──
   if (mic !== null) drawMicPanel(ctx, mic);
@@ -215,6 +517,26 @@ export function drawHud(
   if (s.resetHold > 0) drawResetHold(ctx, s);
 }
 
+/**
+ * 위험 수치 한 칸. 값이 0 을 넘으면 숫자 **아래**에 경고 사선 띠가 깔린다 —
+ * 사선을 글자 뒤에 깔면 숫자가 안 읽힌다.
+ */
+function drawWarnStat(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  align: 'left' | 'right',
+  hot: boolean,
+  col: string,
+): void {
+  const size = 12;
+  ctx.font = font(size, 'bold');
+  const w = ctx.measureText(label).width;
+  const lx = align === 'right' ? x - w : x;
+  if (hot) hazard(ctx, lx - 2, CANVAS_H - 11, w + 4, 3);
+  stencil(ctx, label, x, CANVAS_H - 16, size, hot ? col : C_STENCIL_DIM, align);
+}
+
 // ── 목표 / 속말 ────────────────────────────────────────────────────────────
 
 /** 렌더 전용 프레임 카운터 (탈출구 강조 맥동). 시뮬 상태가 아니다. */
@@ -222,7 +544,8 @@ let objectiveClock = 0;
 
 /**
  * `▸ 억제 코어를 손에 넣어라` → `▸ 탈출구로`.
- * 코어를 손에 넣는 순간 색이 초록으로 바뀌고 맥동하며, 탈출구 방향 화살표가 붙는다.
+ * 벽에 붙은 작은 지시 표지판이다. 코어를 손에 넣으면 초록으로 바뀌고(장치 ON 색),
+ * 맥동하며 탈출구 방향 화살표가 붙는다.
  */
 function drawObjective(ctx: CanvasRenderingContext2D, s: Session): void {
   const obj = currentObjective(s);
@@ -234,13 +557,12 @@ function drawObjective(ctx: CanvasRenderingContext2D, s: Session): void {
   ctx.font = font(12, 'bold');
   const boxW = ctx.measureText(obj.text).width + (obj.held ? 48 : 26);
   const x = Math.round((CANVAS_W - boxW) / 2);
+  const h = 23;
 
-  ctx.fillStyle = withAlpha(C_PANEL, 0.82);
-  ctx.fillRect(x, y - 15, boxW, 23);
-  ctx.strokeStyle = withAlpha(col, obj.held ? 0.3 + pulse * 0.5 : 0.4);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y - 14.5, boxW - 1, 22);
-  text(ctx, obj.text, x + 13, y + 1, 12, withAlpha(col, obj.held ? 0.65 + pulse * 0.35 : 1), 'left', 'bold');
+  plate(ctx, x, y - 15, boxW, h);
+  frame(ctx, x, y - 15, boxW, h, obj.held ? col : C_EDGE, obj.held ? 0.35 + pulse * 0.4 : 0.5);
+  rivets(ctx, x, y - 15, boxW, h);
+  stencil(ctx, obj.text, x + 13, y + 1, 12, withAlpha(col, obj.held ? 0.7 + pulse * 0.3 : 1));
 
   if (obj.held) drawExitArrow(ctx, s, x + boxW - 21, y - 3, col, pulse);
 }
@@ -280,6 +602,9 @@ function drawExitArrow(
 /**
  * 속말 말풍선. 화면 하단 **좌측** 전용 자리에 둔다 — 조작 중인 몸 위에 띄우면
  * 정작 봐야 할 것을 가린다. 말꼬리가 있어야 자막이 아니라 생각으로 읽힌다.
+ *
+ * HUD 수치들보다 **조용해야** 한다: 테두리는 거의 없고, 글자는 스텐실 흰색을 한
+ * 단계 내린 값이다. 단 읽히기는 해야 하므로 헤일로는 그대로 남긴다.
  */
 function drawWhisper(ctx: CanvasRenderingContext2D, w: WhisperView | null): void {
   if (w === null || w.alpha <= 0) return;
@@ -303,14 +628,16 @@ function drawWhisper(ctx: CanvasRenderingContext2D, w: WhisperView | null): void
   ctx.lineTo(x + 14, y + boxH);
   ctx.lineTo(x, y + boxH);
   ctx.closePath();
-  ctx.fillStyle = withAlpha(C_PANEL, 0.88 * w.alpha);
+  ctx.fillStyle = withAlpha(C_PLATE, 0.94 * w.alpha);
   ctx.fill();
-  ctx.strokeStyle = withAlpha(C_I_RING, 0.2 * w.alpha);
+  ctx.strokeStyle = withAlpha(C_EDGE, 0.18 * w.alpha);
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  // HUD 수치들보다 조용해야 한다 — 작고, 흐리고, 이탤릭.
-  ctx.fillStyle = withAlpha(C_TEXT_DIM, 0.92 * w.alpha);
+  ctx.font = `italic ${size}px ${MONO}`;
+  ctx.fillStyle = withAlpha(C_BG, 0.7 * w.alpha);
+  ctx.fillText(w.text, x + 14, y + 18);
+  ctx.fillStyle = withAlpha(C_STENCIL_DIM, 0.95 * w.alpha);
   ctx.fillText(w.text, x + 13, y + 17);
 }
 
@@ -330,7 +657,7 @@ let micPulseClock = 0;
 /**
  * 4칸 음량 미터. 칸 경계(0.25 / 0.5 / 0.75)가 곧 레벨 1/2/3 임계라서,
  * "몇 칸이 찼는가"가 그대로 "지금 테이프에 녹화되는 값"이다.
- * 임계를 넘긴 동안(레벨 ≥ 1) 붉게 맥동한다 — 지금 내는 소리가 영구히 남는다는 경고.
+ * 임계를 넘긴 동안(레벨 ≥ 1) 판 위에 경고 사선 띠가 뜨고 칸이 붉게 맥동한다.
  */
 function drawMicPanel(ctx: CanvasRenderingContext2D, mic: MicView): void {
   const x = PAD;
@@ -342,18 +669,18 @@ function drawMicPanel(ctx: CanvasRenderingContext2D, mic: MicView): void {
 
   const w = 284;
   const h = 24;
-  ctx.fillStyle = withAlpha(C_PANEL, 0.72);
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = withAlpha(accent, over ? 0.35 + pulse * 0.5 : 0.28);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  plate(ctx, x, y, w, h);
+  frame(ctx, x, y, w, h, over ? C_DANGER : C_EDGE, over ? 0.45 + pulse * 0.4 : 0.4);
+  rivets(ctx, x, y, w, h);
+  // 소음이 새어나가는 동안 판 아래 모서리에 경고 사선이 깔린다.
+  if (over) hazard(ctx, x + 1, y + h - 4, w - 2, 3, 0.45 + pulse * 0.55);
 
-  text(ctx, 'LISTEN', x + 8, y + 16, 10, accent, 'left', 'bold');
+  stencil(ctx, 'LISTEN', x + 8, y + 16, 10, accent);
 
   let cx = x + 60;
   for (let i = 0; i < METER_CELLS; i++) {
     const fill = Math.max(0, Math.min(1, (mic.meter - i * 0.25) / 0.25));
-    ctx.fillStyle = withAlpha(C_OFF, 0.45);
+    ctx.fillStyle = C_PLATE_LO;
     ctx.fillRect(cx, y + 6, METER_CELL_W, METER_CELL_H);
     if (fill > 0) {
       // 첫 칸은 안전 구간(레벨 0)이라 초록, 나머지는 소음이 새어나가는 구간.
@@ -361,20 +688,20 @@ function drawMicPanel(ctx: CanvasRenderingContext2D, mic: MicView): void {
       ctx.fillStyle = withAlpha(col, i === 0 ? 0.85 : 0.55 + pulse * 0.45);
       ctx.fillRect(cx, y + 6, Math.round(METER_CELL_W * fill), METER_CELL_H);
     }
-    ctx.strokeStyle = withAlpha(i === 0 ? C_ON : C_DANGER, 0.35);
-    ctx.strokeRect(cx + 0.5, y + 6.5, METER_CELL_W - 1, METER_CELL_H - 1);
+    frame(ctx, cx, y + 6, METER_CELL_W, METER_CELL_H, i === 0 ? C_ON : C_DANGER, 0.3);
     cx += METER_CELL_W + METER_GAP;
   }
 
-  text(ctx, `LV ${mic.level}`, cx + 10, y + 16, 9, over ? C_DANGER : C_TEXT_DIM, 'left', 'bold');
-  text(
+  stencil(ctx, `LV ${mic.level}`, cx + 10, y + 16, 9, over ? C_DANGER : C_STENCIL_DIM);
+  stencil(
     ctx,
     `SENS ${mic.sensitivity}/${mic.sensitivitySteps}  − / =`,
     x + w - 9,
     y + 16,
     9,
-    C_TEXT_DIM,
+    C_STENCIL_DIM,
     'right',
+    'normal',
   );
 }
 
@@ -393,35 +720,37 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   const panelH = 200;
   const px = (CANVAS_W - panelW) / 2;
   const py = (CANVAS_H - panelH) / 2;
-  ctx.fillStyle = C_PANEL;
-  ctx.fillRect(px, py, panelW, panelH);
-  ctx.strokeStyle = withAlpha(waiting ? C_LOOT : C_I_RING, 0.6);
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px + 1, py + 1, panelW - 2, panelH - 2);
+  plate(ctx, px, py, panelW, panelH);
+  // 시설 안내판의 머리띠. 권한 대기 중이면 경고 사선(사용자 행동이 필요하다).
+  if (waiting) hazard(ctx, px + 2, py + 2, panelW - 4, 6);
+  frame(ctx, px, py, panelW, panelH, waiting ? C_LOOT : C_EDGE, 0.55, 2);
+  rivets(ctx, px, py, panelW, panelH);
 
-  text(ctx, 'LISTEN MODE', CANVAS_W / 2, py + 30, 10, C_TEXT_DIM, 'center', 'bold');
-  text(
+  stencil(ctx, 'LISTEN MODE', CANVAS_W / 2, py + 30, 10, C_STENCIL_DIM, 'center');
+  stencilBig(
     ctx,
     waiting ? '마이크 권한을 허용해 주세요' : '조용히 해주세요 — 환경음 측정 중',
     CANVAS_W / 2,
     py + 66,
     22,
-    waiting ? C_LOOT : C_I_CORE,
-    'center',
-    'bold',
+    waiting ? C_LOOT : C_STENCIL,
+    C_PLATE,
   );
 
+  // 산업용 계기: 파인 홈 + 눈금 + 채움.
   const w = panelW - 100;
-  const h = 10;
+  const h = 12;
   const x = (CANVAS_W - w) / 2;
-  const y = py + 92;
-  ctx.fillStyle = withAlpha(C_OFF, 0.55);
+  const y = py + 90;
+  ctx.fillStyle = C_PLATE_LO;
   ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = C_I_RING;
+  ctx.fillStyle = withAlpha(C_LAMP, 0.8);
   ctx.fillRect(x, y, Math.round(w * mic.calibration), h);
-  ctx.strokeStyle = withAlpha(C_I_RING, 0.4);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  for (let i = 1; i < 10; i++) {
+    ctx.fillStyle = withAlpha(C_BG, 0.55);
+    ctx.fillRect(Math.round(x + (w * i) / 10), y, 1, h);
+  }
+  frame(ctx, x, y, w, h, C_EDGE, 0.45);
 
   text(
     ctx,
@@ -429,7 +758,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
       ? '브라우저의 마이크 요청을 허용하면 시작합니다.'
       : '지금 이 방의 소음을 바닥값으로 잡습니다.',
     CANVAS_W / 2,
-    y + 32,
+    y + 34,
     11,
     C_TEXT,
     'center',
@@ -440,7 +769,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
       ? '거부하거나 응답하지 않아도 EASY 모드로 계속 진행됩니다.'
       : '임계값은 이 바닥값 대비 상대치입니다 — 시끄러운 현장에서도 플레이할 수 있게.',
     CANVAS_W / 2,
-    y + 50,
+    y + 52,
     10,
     C_TEXT_DIM,
     'center',
@@ -449,46 +778,59 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
     ctx,
     '오디오는 저장하지도 전송하지도 않습니다. 테이프에 남는 것은 틱당 2비트의 음량 레벨뿐입니다.',
     CANVAS_W / 2,
-    y + 72,
+    y + 74,
     10,
     withAlpha(C_TEXT_DIM, 0.75),
     'center',
   );
 }
 
+/**
+ * 60초 계기.
+ *
+ * 매끈한 네온 바가 아니라 **판에 파인 홈 + 눈금 + 채움**이다. 눈금은 5초마다 얇은
+ * 홈, 10초마다 판을 관통하는 굵은 홈이라 "몇 초 남았나"를 숫자 없이도 셀 수 있다.
+ * 마지막 10초는 채움 자체가 경고 사선으로 바뀐다.
+ */
 function drawTimeGauge(ctx: CanvasRenderingContext2D, s: Session): void {
   const w = 300;
-  const h = 8;
+  const h = 12;
   const x = (CANVAS_W - w) / 2;
-  const y = 16;
+  const y = 13;
   const left = Math.max(0, MAX_TICKS - s.sim.tick);
   const frac = Math.max(0, Math.min(1, left / MAX_TICKS));
-
-  ctx.fillStyle = withAlpha(C_OFF, 0.5);
-  ctx.fillRect(x, y, w, h);
-
-  // 마지막 10초는 붉게 — 60초는 상한일 뿐이지만, 소진은 곧 강제 확정이다.
   const urgent = left < TICK_HZ * 10;
-  ctx.fillStyle = urgent ? C_DANGER : C_I_RING;
-  ctx.fillRect(x, y, w * frac, h);
-  ctx.strokeStyle = withAlpha(C_I_RING, 0.35);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 
-  text(ctx, formatTime(left), x - 10, y + h, 11, urgent ? C_DANGER : C_TEXT, 'right', 'bold');
-  text(
-    ctx,
-    'R ▸ COMMIT',
-    x + w + 10,
-    y + h,
-    11,
-    C_I_RING,
-    'left',
-    'bold',
-  );
+  ctx.fillStyle = C_PLATE_LO;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = withAlpha(C_BG, 0.5);
+  ctx.fillRect(x, y, w, 1);
+
+  const fw = Math.round(w * frac);
+  if (urgent) {
+    hazard(ctx, x, y, fw, h);
+  } else {
+    ctx.fillStyle = withAlpha(C_LOOT, 0.92);
+    ctx.fillRect(x, y, fw, h);
+    // 아래쪽 절반을 눌러 평면 바가 아니라 원통형 계기로 보이게.
+    ctx.fillStyle = withAlpha(C_BG, 0.24);
+    ctx.fillRect(x, y + h - 4, fw, 4);
+  }
+
+  for (let i = 1; i < 12; i++) {
+    const tx = Math.round(x + (w * i) / 12);
+    const major = i % 2 === 0;
+    ctx.fillStyle = withAlpha(C_BG, major ? 0.7 : 0.38);
+    ctx.fillRect(tx, major ? y : y + h - 5, 1, major ? h : 5);
+  }
+  frame(ctx, x, y, w, h, urgent ? C_DANGER : C_EDGE, urgent ? 0.8 : 0.45);
+
+  // 남은 시간은 네 개 핵심 수치 중 하나다 — 계기 옆에 크게, 최대 명도로.
+  stencil(ctx, formatTime(left), x - 10, y + h - 1, 13, urgent ? C_DANGER : C_STENCIL, 'right');
+  stencil(ctx, 'R ▸ COMMIT', x + w + 10, y + h - 1, 11, C_STENCIL);
 
   if (s.playMode === 'STORY') {
-    text(ctx, `LOOP ${s.loopIndex + 1}`, CANVAS_W / 2, y + h + 15, 9, C_TEXT_DIM, 'center');
+    stencil(ctx, `LOOP ${s.loopIndex + 1}`, CANVAS_W / 2, y + h + 15, 9, C_STENCIL_DIM, 'center');
     return;
   }
   drawRunStrip(ctx, s, y + h + 15);
@@ -503,11 +845,11 @@ function drawTimeGauge(ctx: CanvasRenderingContext2D, s: Session): void {
 function drawRunStrip(ctx: CanvasRenderingContext2D, s: Session, y: number): void {
   const t = runTotals(s);
   const parts: [string, string][] = [
-    [`LOOP ${s.loopIndex + 1}`, C_TEXT_DIM],
-    [`RUN ${s.stageIndex + 1}/${STAGES.length}`, C_I_RING],
-    [`GHOSTS ${t.afterimages}`, C_TEXT_DIM],
+    [`LOOP ${s.loopIndex + 1}`, C_STENCIL_DIM],
+    [`RUN ${s.stageIndex + 1}/${STAGES.length}`, C_STENCIL],
+    [`GHOSTS ${t.afterimages}`, C_STENCIL_DIM],
     // 누적 부채 — 런 전체를 관통하는 값이라 0 이 아니면 항상 붉다.
-    [`DEBT ${t.debt}`, t.debt > 0 ? C_DANGER : C_TEXT_DIM],
+    [`DEBT ${t.debt}`, t.debt > 0 ? C_DANGER : C_STENCIL_DIM],
   ];
 
   const SEP = '   ·   ';
@@ -518,10 +860,11 @@ function drawRunStrip(ctx: CanvasRenderingContext2D, s: Session, y: number): voi
 
   let x = (CANVAS_W - total) / 2;
   parts.forEach((p, i) => {
-    text(ctx, p[0], x, y, 9, p[1], 'left', 'bold');
+    stencil(ctx, p[0], x, y, 9, p[1]);
+    ctx.font = font(9, 'bold');
     x += ctx.measureText(p[0]).width;
     if (i < parts.length - 1) {
-      text(ctx, SEP, x, y, 9, withAlpha(C_TEXT_DIM, 0.5), 'left', 'bold');
+      text(ctx, SEP, x, y, 9, withAlpha(C_STENCIL_DIM, 0.5), 'left', 'bold');
       x += sepW;
     }
   });
@@ -532,10 +875,14 @@ function drawTotalClock(ctx: CanvasRenderingContext2D, s: Session): void {
   const label = formatTime(runTotals(s).ticks);
   ctx.font = font(13, 'bold');
   const w = ctx.measureText(label).width;
-  text(ctx, 'TOTAL', CANVAS_W / 2 - w / 2 - 8, 12, 9, C_TEXT_DIM, 'right', 'bold');
-  text(ctx, label, CANVAS_W / 2, 12, 13, C_LOOT, 'center', 'bold');
+  stencil(ctx, 'TOTAL', CANVAS_W / 2 - w / 2 - 8, 11, 9, C_STENCIL_DIM, 'right');
+  stencil(ctx, label, CANVAS_W / 2, 11, 13, C_LOOT, 'center');
 }
 
+/**
+ * 슬롯 인디케이터 = **각인된 수용자 명찰**. 리벳으로 박혀 있고 글자는 판에 눌러
+ * 새긴 것처럼 보인다. 각 슬롯 색은 잔상 정체성 시스템이므로 그대로 유지한다.
+ */
 function drawSlots(ctx: CanvasRenderingContext2D, s: Session): void {
   const boxW = 40;
   const boxH = 22;
@@ -552,14 +899,23 @@ function drawSlots(ctx: CanvasRenderingContext2D, s: Session): void {
     const col = C_SLOT[i] ?? C_I_CORE;
     const a = A_SLOT[i] ?? 1;
 
-    ctx.fillStyle = filled ? withAlpha(col, 0.2 + a * 0.2) : withAlpha(C_OFF, 0.2);
-    ctx.fillRect(x, y, boxW, boxH);
-    ctx.strokeStyle = filled ? withAlpha(col, 0.95) : withAlpha(C_OFF, 0.8);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, boxW - 1, boxH - 1);
+    if (filled) {
+      plate(ctx, x, y, boxW, boxH);
+      // 명찰에 칠해진 그 몸의 색. 판 위에 얇게 얹어 색만 남기고 발광은 없다.
+      ctx.fillStyle = withAlpha(col, 0.12 + a * 0.1);
+      ctx.fillRect(x + 1, y + 1, boxW - 2, boxH - 2);
+    } else {
+      // 비어 있는 자리는 판이 아니라 **파인 홈**이다.
+      ctx.fillStyle = C_PLATE_LO;
+      ctx.fillRect(x, y, boxW, boxH);
+      ctx.fillStyle = withAlpha(C_BG, 0.5);
+      ctx.fillRect(x, y, boxW, 1);
+    }
+    frame(ctx, x, y, boxW, boxH, filled ? col : C_OFF, filled ? 0.85 : 0.55);
+    rivets(ctx, x, y, boxW, boxH);
 
     const label = corpse ? `${name}✕` : name;
-    text(
+    stencil(
       ctx,
       label,
       x + boxW / 2,
@@ -567,45 +923,41 @@ function drawSlots(ctx: CanvasRenderingContext2D, s: Session): void {
       9,
       corpse ? C_CORPSE : filled ? col : C_OFF,
       'center',
-      'bold',
     );
     x += boxW + gap;
   }
 
   const left = MAX_AFTERIMAGES - s.ghosts.length;
-  text(
-    ctx,
-    left > 0 ? `${left} SELVES LEFT` : 'NO ONE LEFT TO BECOME.',
-    CANVAS_W - PAD,
-    y + boxH + 12,
-    9,
-    left > 0 ? C_TEXT_DIM : C_DANGER,
-    'right',
-    left > 0 ? 'normal' : 'bold',
-  );
+  const label = left > 0 ? `${left} SELVES LEFT` : 'NO ONE LEFT TO BECOME.';
+  ctx.font = font(10, 'bold');
+  const lw = ctx.measureText(label).width;
+  // 더 될 수 있는 나가 없다 = 이 스테이지에서 가장 위험한 정보. 사선 띠를 깐다.
+  // 글자와 띠 둘 다 **밴드 안(0..BAND_TOP_H)** 에 들어와야 한다 — 넘치면 띠가 월드
+  // 위에 걸쳐 뜨고, 그러면 벽에 붙은 표지판이 아니라 떠 있는 오버레이로 되돌아간다.
+  const ly = y + boxH + 9;
+  if (left === 0) hazard(ctx, CANVAS_W - PAD - lw - 2, ly + 1, lw + 4, 3);
+  stencil(ctx, label, CANVAS_W - PAD, ly, 10, left > 0 ? C_STENCIL : C_DANGER, 'right');
 }
 
 function drawOverwritePicker(ctx: CanvasRenderingContext2D, s: Session): void {
   const h = 96;
   const y = (CANVAS_H - h) / 2;
-  ctx.fillStyle = withAlpha(C_BG, 0.78);
-  ctx.fillRect(0, y, CANVAS_W, h);
-  ctx.fillStyle = withAlpha(C_LOOT, 0.5);
-  ctx.fillRect(0, y, CANVAS_W, 1);
-  ctx.fillRect(0, y + h - 1, CANVAS_W, 1);
+  plate(ctx, 0, y, CANVAS_W, h, 0.96, 0);
+  // 시설 작업 구역 표시 — 위아래를 경고 사선으로 잘라낸다.
+  hazard(ctx, 0, y, CANVAS_W, 4);
+  hazard(ctx, 0, y + h - 4, CANVAS_W, 4);
 
-  text(
+  stencilBig(
     ctx,
     'PICK A SELF TO REWRITE — 1 / 2 / 3',
     CANVAS_W / 2,
-    y + 30,
+    y + 32,
     16,
     C_LOOT,
-    'center',
-    'bold',
+    C_PLATE,
   );
 
-  // 실제로 존재하는 잔상만 고를 수 있다는 걸 칩으로 보여준다.
+  // 실제로 존재하는 잔상만 고를 수 있다는 걸 명찰로 보여준다.
   const chipW = 96;
   const gap = 12;
   const total = MAX_AFTERIMAGES * chipW + (MAX_AFTERIMAGES - 1) * gap;
@@ -614,53 +966,73 @@ function drawOverwritePicker(ctx: CanvasRenderingContext2D, s: Session): void {
     const ghost = s.ghosts[i];
     const has = ghost !== undefined;
     const col = C_SLOT[i + 1] ?? C_I_CORE;
-    ctx.fillStyle = has ? withAlpha(col, 0.22) : withAlpha(C_OFF, 0.15);
-    ctx.fillRect(x, y + 44, chipW, 30);
-    ctx.strokeStyle = has ? col : withAlpha(C_OFF, 0.7);
-    ctx.lineWidth = has ? 2 : 1;
-    ctx.strokeRect(x + 0.5, y + 44.5, chipW - 1, 29);
+    const cy = y + 44;
+    if (has) {
+      plate(ctx, x, cy, chipW, 30);
+      ctx.fillStyle = withAlpha(col, 0.16);
+      ctx.fillRect(x + 1, cy + 1, chipW - 2, 28);
+    } else {
+      ctx.fillStyle = C_PLATE_LO;
+      ctx.fillRect(x, cy, chipW, 30);
+    }
+    frame(ctx, x, cy, chipW, 30, has ? col : C_OFF, has ? 0.9 : 0.5, has ? 2 : 1);
+    rivets(ctx, x, cy, chipW, 30);
     const nm = SLOT_NAMES[i + 1] ?? '?';
-    text(
+    stencil(
       ctx,
       `${i + 1} ▸ ${nm}${ghost !== undefined && ghost.corpse ? ' ✕' : ''}`,
       x + chipW / 2,
-      y + 64,
+      cy + 20,
       11,
       has ? col : C_OFF,
       'center',
-      'bold',
     );
     x += chipW + gap;
   }
 
-  text(ctx, 'Q ▸ CANCEL', CANVAS_W / 2, y + h - 8, 9, C_TEXT_DIM, 'center');
+  // 아래 사선 띠(4px)에 글자가 닿지 않도록 한 줄 위로 올린다.
+  stencil(ctx, 'Q ▸ CANCEL', CANVAS_W / 2, y + h - 13, 9, C_STENCIL_DIM, 'center', 'normal');
 }
 
+/**
+ * BACKSPACE 홀드 인디케이터. 산업용 다이얼 — 판에 박힌 원형 계기다.
+ * 전체 초기화는 DEBT 를 남기므로 사선 띠를 함께 깐다.
+ */
 function drawResetHold(ctx: CanvasRenderingContext2D, s: Session): void {
   const frac = Math.max(0, Math.min(1, s.resetHold / RESET_HOLD_TICKS));
   const cx = CANVAS_W / 2;
   const cy = CANVAS_H - 96;
   const r = 26;
 
-  ctx.fillStyle = withAlpha(C_BG, 0.7);
+  ctx.fillStyle = withAlpha(C_PLATE, 0.94);
   ctx.beginPath();
   ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = withAlpha(C_EDGE, 0.35);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 7.5, 0, Math.PI * 2);
+  ctx.stroke();
 
-  ctx.strokeStyle = withAlpha(C_OFF, 0.8);
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = C_PLATE_LO;
+  ctx.lineWidth = 5;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.strokeStyle = C_DANGER;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 5;
   ctx.beginPath();
   ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
   ctx.stroke();
 
-  text(ctx, `${Math.round(frac * 100)}%`, cx, cy + 4, 12, C_DANGER, 'center', 'bold');
-  text(ctx, 'HOLD ▸ FULL RESET   (DEBT +1)', cx, cy + r + 22, 10, C_DANGER, 'center', 'bold');
+  stencil(ctx, `${Math.round(frac * 100)}%`, cx, cy + 4, 12, C_DANGER, 'center');
+
+  const label = 'HOLD ▸ FULL RESET   (DEBT +1)';
+  ctx.font = font(10, 'bold');
+  const lw = ctx.measureText(label).width;
+  hazard(ctx, cx - lw / 2 - 3, cy + r + 27, lw + 6, 3);
+  stencil(ctx, label, cx, cy + r + 22, 10, C_DANGER, 'center');
 }
 
 // ── 타이틀 ─────────────────────────────────────────────────────────────────
@@ -685,9 +1057,62 @@ const ROW1_Y = 288;
 const ROW2_Y = 356;
 const CHIP_H = 28;
 
+/** 타이틀 배경의 콘크리트 이음새. 시드에서 한 번 뽑는다 — 격자가 아니어야 한다. */
+let titleSeams: number[] | undefined;
+function seamData(): number[] {
+  if (titleSeams === undefined) {
+    const rnd = seeded(0x3c9a17d5);
+    const out: number[] = [];
+    // [수평 여부, 좌표] 쌍. 규칙적 간격이 아니라 시드로 흩뿌린다.
+    for (let i = 0; i < 5; i++) out.push(1, Math.round(40 + rnd() * (CANVAS_H - 80)));
+    for (let i = 0; i < 4; i++) out.push(0, Math.round(40 + rnd() * (CANVAS_W - 80)));
+    titleSeams = out;
+  }
+  return titleSeams;
+}
+
+let lampGrad: CanvasGradient | undefined;
+let lampGradCtx: CanvasRenderingContext2D | undefined;
+
+/**
+ * 타이틀 배경 = 콘크리트 벽. 발광 격자선 대신 **슬래브 이음새 + 골재 반점 +
+ * 위에서 내려오는 형광등 빛**으로 같은 시설임을 말한다.
+ */
+function drawTitleBackdrop(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = C_VOID;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  const seams = seamData();
+  for (let i = 0; i < seams.length; i += 2) {
+    const horiz = seams[i] === 1;
+    const v = seams[i + 1] ?? 0;
+    ctx.fillStyle = withAlpha(C_SEAM, 0.9);
+    if (horiz) ctx.fillRect(0, v, CANVAS_W, 2);
+    else ctx.fillRect(v, 0, 2, CANVAS_H);
+    // 이음새의 빛 받는 쪽 립 1px — 이게 있어야 선이 아니라 "파인 자리"가 된다.
+    ctx.fillStyle = withAlpha(C_SEAM_LIP, 0.16);
+    if (horiz) ctx.fillRect(0, v - 1, CANVAS_W, 1);
+    else ctx.fillRect(v - 1, 0, 1, CANVAS_H);
+  }
+
+  wear(ctx, 0, 0, CANVAS_W, CANVAS_H, 0.05);
+
+  if (lampGrad === undefined || lampGradCtx !== ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    g.addColorStop(0, withAlpha(C_LAMP, 0.07));
+    g.addColorStop(0.45, withAlpha(C_LAMP, 0.015));
+    g.addColorStop(1, withAlpha(C_BG, 0.5));
+    lampGrad = g;
+    lampGradCtx = ctx;
+  }
+  ctx.fillStyle = lampGrad;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+}
+
 /**
  * 제목이 곧 메커니즘이다: 네 개의 격(I / MY / ME / MINE)이 네 개의 몸이고,
- * 로고에 겹친 오프셋 고스트 텍스트가 곧 잔상이다.
+ * 로고에 겹친 오프셋 고스트 텍스트가 곧 잔상이다. 로고는 그대로 두고 **배경만**
+ * 콘크리트로 내렸다.
  */
 export function drawTitle(
   ctx: CanvasRenderingContext2D,
@@ -695,22 +1120,7 @@ export function drawTitle(
   view: TitleView,
 ): void {
   const { mode, playMode, focusRow, notice } = view;
-  ctx.fillStyle = C_BG;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // 배경 격자 — 게임 화면과 같은 세계임을 암시.
-  ctx.strokeStyle = withAlpha(C_I_RING, 0.05);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x <= CANVAS_W; x += 32) {
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, CANVAS_H);
-  }
-  for (let y = 0; y <= CANVAS_H; y += 32) {
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(CANVAS_W, y + 0.5);
-  }
-  ctx.stroke();
+  drawTitleBackdrop(ctx);
 
   const size = 58;
   const baseY = 205;
@@ -748,7 +1158,7 @@ export function drawTitle(
     ctx.fillText(p, x, baseY);
     x += widths[i] ?? 0;
     if (i < parts.length - 1) {
-      ctx.fillStyle = C_SLOT[i + 1] ?? C_I_RING;
+      ctx.fillStyle = C_SLOT[i + 1] ?? C_I_CORE;
       ctx.fillText('.', x, baseY);
       x += dotW;
     }
@@ -760,15 +1170,21 @@ export function drawTitle(
     const labels = ['NOW', 'LOOP 2', 'LOOP 3', 'LOOP 4'];
     for (let i = 0; i < parts.length; i++) {
       const w = widths[i] ?? 0;
-      ctx.font = font(9, 'bold');
-      ctx.textAlign = 'center';
-      ctx.fillStyle = withAlpha(C_SLOT[i] ?? C_I_CORE, i === 0 ? 0.9 : 0.55);
-      ctx.fillText(labels[i] ?? '', lx + w / 2, baseY + 22);
+      stencil(
+        ctx,
+        labels[i] ?? '',
+        lx + w / 2,
+        baseY + 22,
+        9,
+        withAlpha(C_SLOT[i] ?? C_I_CORE, i === 0 ? 0.9 : 0.55),
+        'center',
+      );
       lx += w + dotW;
     }
   }
 
-  text(ctx, 'Fail now. Escape later.', CANVAS_W / 2, baseY + 48, 18, C_I_RING, 'center', 'bold');
+  // 표어는 시설 벽에 찍힌 스텐실 도장이다.
+  stencilBig(ctx, 'Fail now. Escape later.', CANVAS_W / 2, baseY + 48, 18, C_STRIPE, C_VOID);
   text(
     ctx,
     '실패할 때마다 과거의 내가 동료가 되는 60초 타임루프 탈출극',
@@ -783,40 +1199,40 @@ export function drawTitle(
   // ↑ ↓ 로 줄을 옮기고 ← → (또는 숫자)로 그 줄의 항목을 고른다.
   drawPlayModeRow(ctx, playMode, mode, focusRow === 0, t);
   drawDetectRow(ctx, mode, focusRow === 1);
-  text(
+  stencil(
     ctx,
     '↑ ↓ 줄 이동    ← → 선택    ENTER 시작',
     CANVAS_W / 2,
     432,
     9,
-    withAlpha(C_TEXT_DIM, 0.8),
+    withAlpha(C_STENCIL_DIM, 0.9),
     'center',
-    'bold',
   );
 
   // [ PLAY ] — 맥동하는 CTA. 메뉴는 없다(SPEC §8).
+  // 발광 버튼이 아니라 **경고 사선을 두른 산업용 누름판**이다.
   const pulse = 0.65 + Math.sin(t * 0.06) * 0.35;
   const btnW = 220;
   const btnH = 36;
   const bx = (CANVAS_W - btnW) / 2;
   const by = 444;
-  ctx.fillStyle = withAlpha(C_I_RING, 0.1 + pulse * 0.12);
-  ctx.fillRect(bx, by, btnW, btnH);
-  ctx.strokeStyle = withAlpha(C_I_RING, 0.5 + pulse * 0.5);
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx + 1, by + 1, btnW - 2, btnH - 2);
-  text(ctx, '[ PLAY ] — ENTER', CANVAS_W / 2, by + 24, 15, C_I_CORE, 'center', 'bold');
+  plate(ctx, bx, by, btnW, btnH);
+  hazard(ctx, bx + 1, by + 1, btnW - 2, 4, 0.5 + pulse * 0.5);
+  hazard(ctx, bx + 1, by + btnH - 5, btnW - 2, 4, 0.5 + pulse * 0.5);
+  frame(ctx, bx, by, btnW, btnH, C_EDGE, 0.3 + pulse * 0.4, 2);
+  rivets(ctx, bx, by, btnW, btnH);
+  stencil(ctx, '[ PLAY ] — ENTER', CANVAS_W / 2, by + 24, 15, C_STENCIL, 'center');
 
   // 인트로 재시청. main.ts 가 `S` keydown 을 받아 인트로로 되돌린다.
   // 플레이 방식 `STORY` 와 헷갈리지 않게 이름을 분리했다.
-  text(ctx, 'S ▸ 인트로 다시보기', CANVAS_W / 2, 496, 11, C_TEXT_DIM, 'center', 'bold');
+  stencil(ctx, 'S ▸ 인트로 다시보기', CANVAS_W / 2, 496, 11, C_STENCIL_DIM, 'center');
 
   // 마이크 폴백 같은 사건은 조용히 삼키지 않고 여기 한 줄로 남긴다.
   if (notice !== null) {
-    text(ctx, notice, CANVAS_W / 2, 510, 10, C_DANGER, 'center', 'bold');
+    stencil(ctx, notice, CANVAS_W / 2, 510, 10, C_DANGER, 'center');
   }
 
-  // 조작키 요약
+  // 조작키 요약 — 시설 벽에 붙은 안내판.
   const keys: [string, string][] = [
     ['WASD / ARROWS', '이동'],
     ['SHIFT', '달리기 (소음 발생)'],
@@ -831,7 +1247,7 @@ export function drawTitle(
   keys.forEach((entry, i) => {
     const cx = colX[i < 4 ? 0 : 1] ?? 0;
     const ry = CANVAS_H - 76 + (i % 4) * 17;
-    text(ctx, entry[0], cx, ry, 10, C_I_RING, 'left', 'bold');
+    stencil(ctx, entry[0], cx, ry, 10, withAlpha(C_STRIPE, 0.95));
     text(ctx, entry[1], cx + 140, ry, 10, C_TEXT_DIM, 'left');
   });
 }
@@ -840,7 +1256,7 @@ export function drawTitle(
 function drawRowCaret(ctx: CanvasRenderingContext2D, x: number, y: number, t: number): void {
   const pulse = 0.6 + Math.sin(t * 0.08) * 0.4;
   ctx.save();
-  ctx.fillStyle = withAlpha(C_I_CORE, 0.55 + pulse * 0.45);
+  ctx.fillStyle = withAlpha(C_STENCIL, 0.55 + pulse * 0.45);
   ctx.beginPath();
   ctx.moveTo(x + 8, y);
   ctx.lineTo(x, y - 6);
@@ -850,6 +1266,7 @@ function drawRowCaret(ctx: CanvasRenderingContext2D, x: number, y: number, t: nu
   ctx.restore();
 }
 
+/** 선택 칩 = 벽에 붙은 표찰. 고른 것만 테두리가 굵고 색이 살아 있다. */
 function drawChip(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -862,20 +1279,23 @@ function drawChip(
 ): void {
   // 고르지 않은 줄은 통째로 흐려진다 — 지금 조작 중인 줄이 어디인지가 먼저 읽혀야 한다.
   const dim = focused ? 1 : 0.5;
-  ctx.fillStyle = on ? withAlpha(col, 0.18 * dim) : withAlpha(C_OFF, 0.12 * dim);
-  ctx.fillRect(x, y, w, CHIP_H);
-  ctx.strokeStyle = on ? withAlpha(col, dim) : withAlpha(C_OFF, 0.7 * dim);
-  ctx.lineWidth = on ? 2 : 1;
-  ctx.strokeRect(x + 1, y + 1, w - 2, CHIP_H - 2);
-  text(
+  plate(ctx, x, y, w, CHIP_H, dim);
+  if (on) {
+    ctx.fillStyle = withAlpha(col, 0.14 * dim);
+    ctx.fillRect(x + 1, y + 1, w - 2, CHIP_H - 2);
+  }
+  frame(ctx, x, y, w, CHIP_H, on ? col : C_OFF, (on ? 0.9 : 0.5) * dim, on ? 2 : 1);
+  rivets(ctx, x, y, w, CHIP_H);
+  // 고르지 않았다는 사실은 **테두리와 바탕**이 말한다. 글자를 C_OFF 로 떨어뜨리면
+  // 판 위에서 1.8:1 이라 "고르기 전에 뭔지 알아야 한다"는 이 줄의 목적이 깨진다.
+  stencil(
     ctx,
     label,
     x + w / 2,
     y + 19,
     13,
-    on ? withAlpha(col, dim) : withAlpha(C_OFF, dim),
+    on ? withAlpha(col, dim) : withAlpha(C_STENCIL_DIM, focused ? 1 : 0.7),
     'center',
-    'bold',
   );
 }
 
@@ -901,15 +1321,15 @@ function drawPlayModeRow(
   list.forEach((pm, i) => {
     const x = startX + i * (chipW + gap);
     const on = playMode === pm;
-    const col = pm === 'STORY' ? C_I_RING : pm === 'GAUNTLET' ? C_DANGER : C_LOOT;
+    const col = pm === 'STORY' ? C_STENCIL : pm === 'GAUNTLET' ? C_DANGER : C_LOOT;
     drawChip(ctx, x, ROW1_Y, chipW, PLAY_MODE_LABEL[pm], col, on, focused);
-    text(
+    stencil(
       ctx,
       `${i + 1} ▸ ${PLAY_MODE_CAPTION[pm]}`,
       x + chipW / 2,
       ROW1_Y + CHIP_H + 12,
       9,
-      withAlpha(on ? col : C_TEXT_DIM, focused ? 0.9 : 0.45),
+      withAlpha(on ? col : C_STENCIL_DIM, focused ? 0.9 : 0.45),
       'center',
       on ? 'bold' : 'normal',
     );
@@ -945,15 +1365,15 @@ function drawDetectRow(
 
   list.forEach((m, i) => {
     const x = startX + i * (chipW + gap);
-    const col = m === 'LISTEN' ? C_DANGER : C_I_RING;
+    const col = m === 'LISTEN' ? C_DANGER : C_STENCIL;
     drawChip(ctx, x, ROW2_Y, chipW, `[ ${m} ]`, col, mode === m, focused);
-    text(
+    stencil(
       ctx,
       `${i + 1} ▸ ${m === 'LISTEN' ? '마이크 사용' : '키보드만'}`,
       x + chipW / 2,
       ROW2_Y + CHIP_H + 12,
       9,
-      withAlpha(mode === m ? col : C_TEXT_DIM, focused ? 0.9 : 0.45),
+      withAlpha(mode === m ? col : C_STENCIL_DIM, focused ? 0.9 : 0.45),
       'center',
       mode === m ? 'bold' : 'normal',
     );
@@ -1020,8 +1440,11 @@ export function drawTransition(
     const isFirst = i === 0;
     const isLast = i === lines.length - 1;
     const size = isFirst ? 30 : isLast ? 18 : 14;
-    const col = isFirst ? C_DANGER : isLast ? C_I_RING : C_TEXT;
-    text(ctx, line, CANVAS_W / 2, startY + i * 40, size, withAlpha(col, a), 'center', 'bold');
+    const col = isFirst ? C_DANGER : isLast ? C_STENCIL : C_TEXT;
+    const y = startY + i * 40;
+    // 사건 선언은 벽에 찍힌 도장처럼 크게 — 브리지 두 줄이 스텐실임을 말한다.
+    if (isFirst) stencilBig(ctx, line, CANVAS_W / 2, y, size, withAlpha(col, a), withAlpha(C_BG, a));
+    else stencil(ctx, line, CANVAS_W / 2, y, size, withAlpha(col, a), 'center');
   });
 }
 
@@ -1040,24 +1463,21 @@ export function drawClear(ctx: CanvasRenderingContext2D, s: Session): void {
   const panelH = all ? 330 : 300;
   const px = (CANVAS_W - panelW) / 2;
   const py = (CANVAS_H - panelH) / 2;
-  ctx.fillStyle = withAlpha(C_PANEL, 0.95);
-  ctx.fillRect(px, py, panelW, panelH);
-  ctx.strokeStyle = withAlpha(C_ON, 0.7);
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px + 1, py + 1, panelW - 2, panelH - 2);
+  plate(ctx, px, py, panelW, panelH);
+  frame(ctx, px, py, panelW, panelH, C_ON, 0.55, 2);
+  rivets(ctx, px, py, panelW, panelH);
 
-  text(
+  stencilBig(
     ctx,
     all ? 'ALL ESCAPED' : 'ESCAPED',
     CANVAS_W / 2,
     py + 48,
     all ? 26 : 30,
     C_ON,
-    'center',
-    'bold',
+    C_PLATE,
   );
   const runMode = s.playMode !== 'STORY';
-  text(
+  stencil(
     ctx,
     runMode
       ? `STAGE ${s.stageIndex + 1} / ${STAGES.length} — ${s.level.name.toUpperCase()}`
@@ -1065,18 +1485,19 @@ export function drawClear(ctx: CanvasRenderingContext2D, s: Session): void {
     CANVAS_W / 2,
     py + 70,
     10,
-    C_TEXT_DIM,
+    C_STENCIL_DIM,
     'center',
+    'normal',
   );
 
   const used = s.ghosts.length;
   const totals = runTotals(s);
   const rows: [string, string, string][] = [
-    ['LOOPS', String(used + 1), C_TEXT],
-    ['AFTERIMAGES', `${used} / PAR ${s.level.par}`, used <= s.level.par ? C_ON : C_TEXT],
-    ['TIME', formatTime(s.elapsedTicks), C_TEXT],
-    ['ALERTS', String(s.alerts), s.alerts > 0 ? C_LOOT : C_TEXT],
-    ['DEBT', String(s.debt), s.debt > 0 ? C_DANGER : C_TEXT],
+    ['LOOPS', String(used + 1), C_STENCIL],
+    ['AFTERIMAGES', `${used} / PAR ${s.level.par}`, used <= s.level.par ? C_ON : C_STENCIL],
+    ['TIME', formatTime(s.elapsedTicks), C_STENCIL],
+    ['ALERTS', String(s.alerts), s.alerts > 0 ? C_LOOT : C_STENCIL],
+    ['DEBT', String(s.debt), s.debt > 0 ? C_DANGER : C_STENCIL],
   ];
   // 이어서 하는 모드에서는 이 스테이지의 성적보다 런 누적치가 더 중요하다.
   if (runMode) {
@@ -1090,15 +1511,18 @@ export function drawClear(ctx: CanvasRenderingContext2D, s: Session): void {
   }
   rows.forEach((r, i) => {
     const ry = py + 106 + i * 26;
-    text(ctx, r[0], px + 40, ry, 12, C_TEXT_DIM, 'left');
-    text(ctx, r[1], px + panelW - 40, ry, 13, r[2], 'right', 'bold');
+    // 항목 사이 얇은 홈 — 성적표가 인쇄 양식처럼 읽힌다.
+    ctx.fillStyle = withAlpha(C_BG, 0.35);
+    ctx.fillRect(px + 40, ry + 6, panelW - 80, 1);
+    stencil(ctx, r[0], px + 40, ry, 12, C_STENCIL_DIM, 'left', 'normal');
+    stencil(ctx, r[1], px + panelW - 40, ry, 13, r[2], 'right');
   });
 
   const medalY = py + 250;
   if (s.medal) {
-    ctx.fillStyle = withAlpha(C_LOOT, 0.14);
-    ctx.fillRect(px + 30, medalY - 20, panelW - 60, 30);
-    text(ctx, 'MINIMUM AFTERIMAGE ★', CANVAS_W / 2, medalY, 15, C_LOOT, 'center', 'bold');
+    plate(ctx, px + 30, medalY - 20, panelW - 60, 30);
+    frame(ctx, px + 30, medalY - 20, panelW - 60, 30, C_LOOT, 0.7);
+    stencil(ctx, 'MINIMUM AFTERIMAGE ★', CANVAS_W / 2, medalY, 15, C_LOOT, 'center');
   } else {
     text(
       ctx,
@@ -1111,15 +1535,14 @@ export function drawClear(ctx: CanvasRenderingContext2D, s: Session): void {
     );
   }
 
-  text(
+  stencil(
     ctx,
     all ? 'ENTER ▸ TITLE' : runMode ? 'ENTER ▸ 다음 스테이지로 계속' : 'ENTER ▸ NEXT',
     CANVAS_W / 2,
     py + panelH - 24,
     14,
-    C_I_RING,
+    C_STENCIL,
     'center',
-    'bold',
   );
 }
 
@@ -1139,35 +1562,33 @@ function drawRunResult(ctx: CanvasRenderingContext2D, r: RunResult): void {
   const px = (CANVAS_W - panelW) / 2;
   const py = (CANVAS_H - panelH) / 2;
 
-  ctx.fillStyle = withAlpha(C_PANEL, 0.96);
-  ctx.fillRect(px, py, panelW, panelH);
-  ctx.strokeStyle = withAlpha(timed ? C_LOOT : C_DANGER, 0.75);
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px + 1, py + 1, panelW - 2, panelH - 2);
+  plate(ctx, px, py, panelW, panelH);
+  frame(ctx, px, py, panelW, panelH, timed ? C_LOOT : C_DANGER, 0.6, 2);
+  rivets(ctx, px, py, panelW, panelH);
 
-  text(ctx, 'RUN COMPLETE', CANVAS_W / 2, py + 40, 24, C_ON, 'center', 'bold');
-  text(
+  stencilBig(ctx, 'RUN COMPLETE', CANVAS_W / 2, py + 40, 24, C_ON, C_PLATE);
+  stencil(
     ctx,
     `${PLAY_MODE_LABEL[r.playMode]}  ·  ${r.mode}  ·  ${r.totals.stages} / ${STAGES.length} STAGES`,
     CANVAS_W / 2,
     py + 60,
     10,
-    C_TEXT_DIM,
+    C_STENCIL_DIM,
     'center',
+    'normal',
   );
 
   // ── 히어로 숫자 ──
   const heroCol = timed ? C_LOOT : C_DANGER;
-  text(ctx, timed ? 'TOTAL TIME' : 'TOTAL DEBT', CANVAS_W / 2, py + 92, 10, C_TEXT_DIM, 'center', 'bold');
-  text(
+  stencil(ctx, timed ? 'TOTAL TIME' : 'TOTAL DEBT', CANVAS_W / 2, py + 92, 10, C_STENCIL_DIM, 'center');
+  stencilBig(
     ctx,
     timed ? formatTime(r.totals.ticks) : String(r.totals.debt),
     CANVAS_W / 2,
     py + 134,
     38,
     heroCol,
-    'center',
-    'bold',
+    C_PLATE,
   );
   text(
     ctx,
@@ -1182,48 +1603,46 @@ function drawRunResult(ctx: CanvasRenderingContext2D, r: RunResult): void {
   // ── NEW BEST / 이전 기록 ──
   if (r.newBest) {
     const bw = 260;
-    ctx.fillStyle = withAlpha(C_LOOT, 0.16);
-    ctx.fillRect(CANVAS_W / 2 - bw / 2, py + 166, bw, 26);
-    ctx.strokeStyle = withAlpha(C_LOOT, 0.8);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(CANVAS_W / 2 - bw / 2 + 0.5, py + 166.5, bw - 1, 25);
-    text(ctx, 'NEW BEST ★', CANVAS_W / 2, py + 184, 14, C_LOOT, 'center', 'bold');
+    const bx = CANVAS_W / 2 - bw / 2;
+    plate(ctx, bx, py + 166, bw, 26);
+    frame(ctx, bx, py + 166, bw, 26, C_LOOT, 0.8);
+    rivets(ctx, bx, py + 166, bw, 26);
+    stencil(ctx, 'NEW BEST ★', CANVAS_W / 2, py + 184, 14, C_LOOT, 'center');
     if (!r.saved) {
       // 저장이 막힌 환경(프라이빗 모드 등)이라는 사실을 숨기지 않는다.
       text(ctx, '기록을 저장하지 못했습니다 (브라우저 저장소 차단)', CANVAS_W / 2, py + 204, 9, C_TEXT_DIM, 'center');
     }
   } else if (r.previousBest !== null) {
-    text(
+    stencil(
       ctx,
       `BEST ${bestLabel(r.playMode, r.previousBest)}`,
       CANVAS_W / 2,
       py + 184,
       12,
-      C_TEXT_DIM,
+      C_STENCIL_DIM,
       'center',
-      'bold',
     );
   }
 
   // ── 누적 스탯 ──
   const stats: [string, string, string][] = [
-    ['STAGES', `${r.totals.stages}`, C_TEXT],
-    ['AFTERIMAGES', `${r.totals.afterimages}`, C_TEXT],
+    ['STAGES', `${r.totals.stages}`, C_STENCIL],
+    ['AFTERIMAGES', `${r.totals.afterimages}`, C_STENCIL],
     [timed ? 'DEBT' : 'TIME', timed ? `${r.totals.debt}` : formatTime(r.totals.ticks),
-      timed && r.totals.debt > 0 ? C_DANGER : C_TEXT],
-    ['ALERTS', `${r.totals.alerts}`, r.totals.alerts > 0 ? C_LOOT : C_TEXT],
-    ['MEDALS', `${r.totals.medals} ★`, r.totals.medals > 0 ? C_LOOT : C_TEXT],
+      timed && r.totals.debt > 0 ? C_DANGER : C_STENCIL],
+    ['ALERTS', `${r.totals.alerts}`, r.totals.alerts > 0 ? C_LOOT : C_STENCIL],
+    ['MEDALS', `${r.totals.medals} ★`, r.totals.medals > 0 ? C_LOOT : C_STENCIL],
   ];
   const statW = (panelW - 80) / stats.length;
   stats.forEach((st, i) => {
     const cx = px + 40 + statW * i + statW / 2;
-    text(ctx, st[0], cx, py + 226, 9, C_TEXT_DIM, 'center');
-    text(ctx, st[1], cx, py + 246, 15, st[2], 'center', 'bold');
+    stencil(ctx, st[0], cx, py + 226, 9, C_STENCIL_DIM, 'center', 'normal');
+    stencil(ctx, st[1], cx, py + 246, 15, st[2], 'center');
   });
 
   drawSplits(ctx, r.splits, px + 40, py + 274, panelW - 80, timed);
 
-  text(ctx, 'ENTER ▸ TITLE', CANVAS_W / 2, py + panelH - 20, 14, C_I_RING, 'center', 'bold');
+  stencil(ctx, 'ENTER ▸ TITLE', CANVAS_W / 2, py + panelH - 20, 14, C_STENCIL, 'center');
 }
 
 /** 스테이지별 스플릿. 15개까지 두 열로 나눠 담는다. */
@@ -1235,9 +1654,9 @@ function drawSplits(
   w: number,
   timed: boolean,
 ): void {
-  ctx.fillStyle = withAlpha(C_I_RING, 0.14);
+  ctx.fillStyle = withAlpha(C_EDGE, 0.2);
   ctx.fillRect(x, y - 14, w, 1);
-  text(ctx, timed ? 'SPLITS' : 'STAGES', x, y - 2, 9, C_TEXT_DIM, 'left', 'bold');
+  stencil(ctx, timed ? 'SPLITS' : 'STAGES', x, y - 2, 9, C_STENCIL_DIM);
 
   if (splits.length === 0) return;
 
@@ -1252,24 +1671,24 @@ function drawSplits(
     const cx = x + col * (colW + gap);
     const cy = y + 14 + row * rowH;
     const name = sp.name.length > 15 ? `${sp.name.slice(0, 14)}…` : sp.name;
-    text(
+    stencil(
       ctx,
       `${pad2(sp.stageIndex + 1)} ${sp.medal ? '★' : ' '} ${name}`,
       cx,
       cy,
       9,
-      sp.medal ? C_LOOT : C_TEXT_DIM,
+      sp.medal ? C_LOOT : C_STENCIL_DIM,
       'left',
+      'normal',
     );
-    text(
+    stencil(
       ctx,
       timed ? formatTime(sp.ticks) : `잔상 ${sp.afterimages}`,
       cx + colW,
       cy,
       9,
-      C_TEXT,
+      C_STENCIL,
       'right',
-      'bold',
     );
   });
 }
@@ -1278,8 +1697,8 @@ function drawSplits(
 
 export function drawPause(ctx: CanvasRenderingContext2D): void {
   scrim(ctx, 0.82);
-  text(ctx, 'PAUSED', CANVAS_W / 2, 150, 34, C_I_CORE, 'center', 'bold');
-  text(ctx, 'ESC ▸ RESUME', CANVAS_W / 2, 176, 11, C_TEXT_DIM, 'center');
+  stencilBig(ctx, 'PAUSED', CANVAS_W / 2, 150, 34, C_STENCIL, withAlpha(C_BG, 0.82));
+  stencil(ctx, 'ESC ▸ RESUME', CANVAS_W / 2, 176, 11, C_STENCIL_DIM, 'center', 'normal');
 
   const rows: [string, string][] = [
     ['WASD / ARROWS', '이동'],
@@ -1293,7 +1712,7 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
   ];
   rows.forEach((r, i) => {
     const y = 224 + i * 24;
-    text(ctx, r[0], CANVAS_W / 2 - 250, y, 12, C_I_RING, 'left', 'bold');
+    stencil(ctx, r[0], CANVAS_W / 2 - 250, y, 12, withAlpha(C_STRIPE, 0.95));
     text(ctx, r[1], CANVAS_W / 2 - 80, y, 11, C_TEXT_DIM, 'left');
   });
 
