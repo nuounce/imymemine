@@ -34,13 +34,18 @@ import {
 import {
   drawCalibration,
   drawClear,
+  drawHelp,
   drawHud,
   drawPause,
   drawTitle,
   drawTouchControls,
   drawTransition,
+  HELP_HITS,
   hitTest,
+  isHelpOpen,
+  learnPrompt,
   PAUSE_HITS,
+  setHelpOpen,
   setTouchUi,
   TITLE_HITS,
 } from './render/hud';
@@ -497,6 +502,26 @@ function handleMeta(): void {
     audio.toggleMute();
   }
 
+  // ── 조작법 패널 ──
+  // `H` / `?` 는 어느 페이즈에서나 통한다 — 막힌 순간에 열지 못하면 소용이 없다.
+  if (input.consumePressed('HELP')) setHelpOpen(!isHelpOpen());
+
+  if (isHelpOpen()) {
+    // 열려 있는 동안 `ESC` 는 **닫기만** 한다. 여기서 togglePause 로 흘려보내면
+    // 조작법을 닫았을 뿐인데 일시정지 화면이 나오거나 게임이 다시 굴러간다.
+    if (input.consumePressed('PAUSE')) setHelpOpen(false);
+    // 읽는 동안 눌린 게임 조작 엣지는 전부 버린다. 닫는 순간 한꺼번에 터지면
+    // 안 읽은 것만 못하다(잔상이 확정되거나 덮어쓰기가 열린다).
+    input.consumePressed('START');
+    input.consumePressed('COMMIT');
+    input.consumePressed('OVERWRITE');
+    input.consumePressed('SLOT1');
+    input.consumePressed('SLOT2');
+    input.consumePressed('SLOT3');
+    session.resetHold = 0;
+    return;
+  }
+
   if (input.consumePressed('START')) startPressed();
 
   if (input.consumePressed('PAUSE')) togglePause();
@@ -514,6 +539,7 @@ function handleMeta(): void {
 
   // ── 덮어쓰기 모드 ──
   if (input.consumePressed('OVERWRITE')) {
+    learnPrompt('OVERWRITE'); // 눌러 봤다 = 배웠다. 남은 횟수가 0 이어도 마찬가지다.
     if (session.awaitingOverwritePick) {
       session.awaitingOverwritePick = false; // Q 를 다시 누르면 취소
     } else if (session.overwriteLeft > 0) {
@@ -533,10 +559,13 @@ function handleMeta(): void {
   }
 
   // ── 조기 확정 ──
-  if (input.consumePressed('COMMIT') && !session.awaitingOverwritePick) {
-    commitLoop(session, 'MANUAL');
-    audio.commit();
-    resetSfxEdges();
+  if (input.consumePressed('COMMIT')) {
+    learnPrompt('COMMIT');
+    if (!session.awaitingOverwritePick) {
+      commitLoop(session, 'MANUAL');
+      audio.commit();
+      resetSfxEdges();
+    }
   }
 
   // ── Backspace 2초 홀드 → 전체 초기화 (DEBT +1) ──
@@ -561,7 +590,9 @@ function handleMeta(): void {
 
 /** 지금 어떤 패드 묶음이 살아 있어야 하는가. 세션 상태에서 매 틱 결정한다. */
 function touchContext(): TouchContext {
-  if (session.phase !== 'PLAY' || session.paused) return 'NONE';
+  // 조작법이 떠 있는 동안 패드가 살아 있으면, 닫으려고 누른 손가락이 COMMIT 을
+  // 눌러 버린다. 패드를 통째로 내려 탭이 전부 "닫기"로만 오게 한다.
+  if (session.phase !== 'PLAY' || session.paused || isHelpOpen()) return 'NONE';
   return session.awaitingOverwritePick ? 'PICK' : 'PLAY';
 }
 
@@ -602,6 +633,7 @@ function handleTitleTap(x: number, y: number): void {
 function handlePauseTap(x: number, y: number): void {
   const id = hitTest(PAUSE_HITS, x, y);
   if (id === 'RESUME') togglePause();
+  else if (id === 'HELP') setHelpOpen(true);
   else if (id === 'MUTE') {
     audio.resume();
     audio.toggleMute();
@@ -611,6 +643,12 @@ function handlePauseTap(x: number, y: number): void {
 function handleTaps(): void {
   const taps = touch.consumeTaps();
   for (const t of taps) {
+    // 조작법이 열려 있으면 어디를 탭하든 닫기다 — 손가락에게는 `ESC` 가 없고,
+    // 닫는 버튼을 따로 찾게 만들면 패널에 갇힌다.
+    if (isHelpOpen()) {
+      setHelpOpen(false);
+      return; // 화면이 바뀌었다. 남은 탭이 그 아래 버튼을 누르면 안 된다.
+    }
     switch (session.phase) {
       case 'INTRO':
         leaveIntro();
@@ -621,6 +659,8 @@ function handleTaps(): void {
       case 'PLAY':
       case 'TRANSITION':
         if (session.paused) handlePauseTap(t.x, t.y);
+        // 우상단 `?`. 패드가 먹지 않은 탭만 여기 오므로 조이스틱과 겹치지 않는다.
+        else if (hitTest(HELP_HITS, t.x, t.y) === 'HELP') setHelpOpen(true);
         break;
       case 'CLEAR':
       case 'ALLCLEAR':
@@ -666,7 +706,10 @@ function onTick(): void {
 
   handleMeta();
 
-  if (session.paused) return;
+  // 조작법을 읽는 동안 세계는 멈춘다. 일시정지와 같은 결이다 — 안내를 읽는 사이에
+  // 간수가 걸어오면 그 안내는 함정이 된다. 이 `return` 이 곧 입력 차단이기도 하다:
+  // `tickSession` 이 불리지 않으므로 `input.mask()` 가 시뮬에 닿는 경로가 없다.
+  if (session.paused || isHelpOpen()) return;
 
   switch (session.phase) {
     case 'INTRO': {
@@ -760,6 +803,10 @@ function onRender(): void {
   } else if (micNotice !== null && session.phase !== 'TITLE') {
     drawMicNotice(g, micNotice);
   }
+
+  // 조작법은 **무엇보다 위**다. 일시정지 스크림·전환·성적표·마이크 안내 위에 얹히므로
+  // 어느 페이즈에서 열었든 가려지는 일이 없다.
+  if (isHelpOpen()) drawHelp(g);
 }
 
 /** 폴백 사유 한 줄. 화면 하단 밴드 위에 조용히 얹는다. */
@@ -863,6 +910,7 @@ if (import.meta.env.DEV) {
     PAUSE: 'Escape',
     START: 'Enter',
     MUTE: 'KeyM',
+    HELP: 'KeyH',
   };
 
   /**

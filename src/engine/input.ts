@@ -26,7 +26,8 @@ export type MetaKey =
   | 'RESET' // Backspace — 2초 홀드로 전체 초기화
   | 'PAUSE' // Esc
   | 'START' // Enter — 시작 / 다음 스테이지
-  | 'MUTE'; // M
+  | 'MUTE' // M
+  | 'HELP'; // H / ? — 조작법 패널 열고 닫기
 
 export interface Input {
   /** 이번 틱의 녹화 대상 입력 비트마스크. */
@@ -69,6 +70,8 @@ const META_BY_CODE: Readonly<Record<string, MetaKey>> = {
   Enter: 'START',
   NumpadEnter: 'START',
   KeyM: 'MUTE',
+  KeyH: 'HELP',
+  Slash: 'HELP',
 };
 
 /** 눌렸을 때 브라우저 기본 동작을 막아야 하는 키(뒤로가기·스크롤·검색 등). */

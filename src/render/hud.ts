@@ -22,12 +22,19 @@ import {
   BODY_SUB,
   CANVAS_H,
   CANVAS_W,
+  IN_DOWN,
+  IN_INTERACT,
+  IN_LEFT,
+  IN_RIGHT,
+  IN_RUN,
+  IN_UP,
   INTERACT_RANGE,
   LOOP_TRANSITION_TICKS,
   MAX_AFTERIMAGES,
   MAX_TICKS,
   RESET_HOLD_TICKS,
   SLOT_NAMES,
+  SUBPIXEL,
   TICK_HZ,
   TILE_SUB,
 } from '../sim/constants';
@@ -55,6 +62,8 @@ import {
 import { STAGES } from '../game/levels';
 import { currentObjective, updateWhisper, type WhisperView } from '../game/whisper';
 import type { MicView } from '../engine/mic';
+import type { Body } from '../sim/types';
+import { drawKeycap, keycapBox } from './keycap';
 import {
   A_SLOT,
   C_BG,
@@ -183,11 +192,25 @@ export const TITLE_HITS: readonly HitRect[] = [
 
 const PAUSE_RESUME_BTN = { x: 260, y: 400, w: 200, h: 46 } as const;
 const PAUSE_MUTE_BTN = { x: 500, y: 400, w: 200, h: 46 } as const;
+/** 일시정지에서 조작법으로. 손가락에게는 `H` 키가 존재하지 않는다. */
+const PAUSE_HELP_BTN = { x: 380, y: 462, w: 200, h: 42 } as const;
 
 /** 일시정지 화면의 탭 대상(터치 전용). */
 export const PAUSE_HITS: readonly HitRect[] = [
   { id: 'RESUME', ...PAUSE_RESUME_BTN },
   { id: 'MUTE', ...PAUSE_MUTE_BTN },
+  { id: 'HELP', ...PAUSE_HELP_BTN },
+];
+
+/**
+ * 우상단 `?` 버튼. 터치 기기에서 조작법 패널로 들어가는 유일한 문이다.
+ * 상단 밴드(0..50) 아래, PAUSE 패드(x 905..947) 왼쪽 — 어느 것도 가리지 않는다.
+ */
+const HELP_BTN = { x: 846, y: 54, w: 44, h: 44 } as const;
+
+/** `?` 버튼의 탭 영역. 손가락은 마우스보다 크므로 보이는 원보다 넉넉하다. */
+export const HELP_HITS: readonly HitRect[] = [
+  { id: 'HELP', x: HELP_BTN.x - 8, y: HELP_BTN.y - 8, w: HELP_BTN.w + 16, h: HELP_BTN.h + 16 },
 ];
 
 /** 점이 사각형 안인가. 경계는 포함한다. */
@@ -196,6 +219,479 @@ export function hitTest(hits: readonly HitRect[], x: number, y: number): string 
     if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) return h.id;
   }
   return null;
+}
+
+// ── 상황별 키 프롬프트 ─────────────────────────────────────────────────────
+//
+// 키 표를 읽고 외우게 하는 방식은 통하지 않는다. 그래서 여기서는 **필요한 순간에
+// 필요한 키 하나만** 조작 중인 몸 옆에 띄운다. 그 상황이 처음 됐을 때 3초, 페이드로
+// 들어오고 나가며, 해당 키를 실제로 누르면 즉시 사라진다(= 배웠다는 신호).
+//
+// **이 블록은 Session/SimState 를 읽기만 한다.** 표시 상태는 전부 아래 모듈 스코프
+// 변수와 localStorage 에만 있다 — 세션에 한 바이트라도 쓰면 결정론이 깨진다.
+
+export type PromptId = 'MOVE' | 'INTERACT' | 'COMMIT' | 'OVERWRITE' | 'RUN' | 'TIMEUP';
+
+interface PromptCopy {
+  /** 키보드용 키캡 라벨. 빈 문자열이면 키캡 없이 문구만. */
+  key: string;
+  /** 터치용 버튼 라벨. 화면에 실제로 있는 그 버튼의 이름이어야 한다. */
+  touchKey: string;
+  line: string;
+  color: string;
+  /** 이 게임의 핵심 동작 — 더 크게, 경고 사선까지 두른다. */
+  big?: boolean;
+}
+
+const PROMPT_COPY: Readonly<Record<PromptId, PromptCopy>> = {
+  MOVE: { key: 'WASD', touchKey: '스틱', line: '움직여 봐', color: C_STENCIL },
+  INTERACT: { key: 'E', touchKey: 'E', line: '만져 본다', color: C_ON },
+  COMMIT: { key: 'R', touchKey: 'COMMIT', line: '여기 나를 남긴다', color: C_LOOT, big: true },
+  OVERWRITE: { key: 'Q', touchKey: 'Q', line: '잔상 하나를 다시 녹화', color: C_LOOT },
+  RUN: { key: 'SHIFT', touchKey: '링 밖', line: '뛰면 소리가 난다', color: C_DANGER },
+  TIMEUP: { key: '', touchKey: '', line: '곧 강제로 확정된다', color: C_DANGER },
+};
+
+/**
+ * 동시에 두 개를 띄우지 않는다 — 배울 것이 둘이면 아무것도 배우지 않는다.
+ * 앞에 있는 것이 먼저다: 지금 위험한 것(R / 발각) → 지금 할 수 있는 것 → 나머지.
+ */
+const PROMPT_ORDER: readonly PromptId[] = [
+  'COMMIT',
+  'RUN',
+  'INTERACT',
+  'OVERWRITE',
+  'TIMEUP',
+  'MOVE',
+];
+
+/** 표시 시간 약 3초. 60fps 렌더 프레임 기준(시뮬 틱이 아니다). */
+const PROMPT_FRAMES = 180;
+const PROMPT_FADE_IN = 12;
+const PROMPT_FADE_OUT = 20;
+/** 키를 실제로 눌렀을 때의 퇴장. "즉시"이되 툭 끊기지는 않는 값. */
+const PROMPT_DISMISS_FRAMES = 6;
+
+/** 몸 중심에서 프롬프트까지의 거리. 몸(24px)을 확실히 비켜 간다. */
+const PROMPT_OFFSET = 34;
+const PROMPT_MARGIN = 16;
+/**
+ * 프롬프트가 들어갈 수 있는 세로 띠.
+ *
+ * 아래 경계 496 은 **좌하단 속말 자리를 침범하지 않기 위한 값**이다: 속말 말풍선의
+ * 상단은 `CANVAS_H - 54 - 26 = 520` 이므로(drawWhisper 참고) 24px 이 남는다.
+ * 위 경계 92 는 상단 밴드(50) · 목표 표지판(~76) · LISTEN 계기판(58..82) 아래다.
+ */
+const PROMPT_TOP = 92;
+const PROMPT_BOTTOM = 496;
+/** 터치에서는 위아래 모두 좁다: 위는 `?`/PAUSE 패드(53..98), 아래는 액션 패드(372~). */
+const PROMPT_TOP_TOUCH = 104;
+const PROMPT_BOTTOM_TOUCH = 366;
+
+/** 이미 배운 안내. 다음 플레이에서도 반복하지 않으므로 localStorage 에 남는다. */
+const TAUGHT_KEY = 'imm.taught';
+const taught = new Set<PromptId>();
+let taughtLoaded = false;
+
+/**
+ * 저장소가 막힌 환경(사파리 프라이빗 모드·쿠키 차단)에서 localStorage 는 **접근만
+ * 해도** 예외를 던진다. 안내가 매 판 다시 나오는 것이 게임이 죽는 것보다 낫다.
+ */
+function loadTaught(): void {
+  if (taughtLoaded) return;
+  taughtLoaded = true;
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = window.localStorage.getItem(TAUGHT_KEY);
+    if (raw === null) return;
+    for (const part of raw.split(',')) {
+      if (part in PROMPT_COPY) taught.add(part as PromptId);
+    }
+  } catch {
+    /* 저장소 없음 — 이번 판만 안내가 나온다. */
+  }
+}
+
+function saveTaught(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(TAUGHT_KEY, [...taught].join(','));
+  } catch {
+    /* 위와 같음 */
+  }
+}
+
+/** 렌더 프레임 카운터(프롬프트 전용). 시뮬 상태가 아니다. */
+let promptClock = 0;
+let promptId: PromptId | null = null;
+let promptStart = 0;
+let promptEnd = 0;
+/** 조작법 패널이 열려 있는가. 열린 동안 프롬프트 시계는 멈춘다. */
+let helpOpen = false;
+
+/** main.ts 가 `H` / `?` / 탭으로 패널을 열고 닫을 때 알린다. */
+export function setHelpOpen(on: boolean): void {
+  helpOpen = on;
+}
+
+export function isHelpOpen(): boolean {
+  return helpOpen;
+}
+
+/**
+ * 그 키를 실제로 써 봤다 = 배웠다. 떠 있던 프롬프트는 즉시 물러간다.
+ *
+ * 이동/상호작용/달리기는 입력 마스크에서 직접 읽히지만, `R`/`Q` 는 테이프에 녹화되지
+ * 않는 메타키라 마스크에 없다 — 그 둘만 main.ts 가 이 함수로 알려준다.
+ */
+export function learnPrompt(id: PromptId): void {
+  if (taught.has(id)) return;
+  taught.add(id);
+  saveTaught();
+  if (promptId === id) {
+    promptEnd = Math.min(promptEnd, promptClock + PROMPT_DISMISS_FRAMES);
+  }
+}
+
+/** 안내를 처음부터 다시 받는다. 지금은 부르는 곳이 없다 — 개발 중 확인용. */
+export function resetTaught(): void {
+  taught.clear();
+  taughtLoaded = true;
+  saveTaught();
+  promptId = null;
+}
+
+/** 조작 중인 몸(I). 없으면 undefined — 전환 직후 한두 프레임 그럴 수 있다. */
+function liveBody(s: Session): Body | undefined {
+  return s.sim.bodies.find((b) => b.isLive);
+}
+
+/**
+ * 내가 밟고 있는 발판이 지금 ON 인가.
+ *
+ * "채널이 ON 됐다"만 보면 잔상이 밟은 것까지 걸린다. 이 프롬프트가 가르치려는 것은
+ * **내가 여기 서 있어야 문이 열린다 → 그러니 나를 여기 남긴다** 이므로, 판정은
+ * 반드시 조작 중인 몸과 발판의 겹침이어야 한다.
+ */
+function standingOnLivePlate(s: Session): boolean {
+  const me = liveBody(s);
+  if (me === undefined) return false;
+  for (const p of s.sim.plates) {
+    if (!p.on) continue;
+    if (me.x < p.x + p.w && p.x < me.x + BODY_SUB && me.y < p.y + p.h && p.y < me.y + BODY_SUB) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 지금 이 상황인가. 전부 Session/SimState **읽기**뿐이다. */
+function promptArmed(id: PromptId, s: Session): boolean {
+  switch (id) {
+    case 'MOVE':
+      // 스테이지 1의 첫 루프. "아직 안 움직였다"는 taught 가 대신 말한다 —
+      // 이동 비트가 한 번이라도 들어오면 그 즉시 배운 것으로 기록된다.
+      return s.stageIndex === 0 && s.ghosts.length === 0 && s.loopIndex === 0;
+    case 'INTERACT':
+      // 터치 INTERACT 패드가 살아나는 판정과 **같은 함수**를 쓴다(사거리 규칙 1개).
+      return nearInteractable(s);
+    case 'COMMIT':
+      return standingOnLivePlate(s);
+    case 'OVERWRITE':
+      // 잔상이 있고, par 를 넘겼고, 아직 이 스테이지의 덮어쓰기가 남아 있다.
+      return s.ghosts.length >= 1 && s.ghosts.length > s.level.par && s.overwriteLeft > 0;
+    case 'RUN':
+      // `spotted` = 이번 루프에 간수/감시안에 발각된 적이 있는가 (sim 이 세우는 깃발).
+      return liveBody(s)?.spotted === true;
+    case 'TIMEUP':
+      return MAX_TICKS - s.sim.tick < TICK_HZ * 10;
+    default:
+      return false;
+  }
+}
+
+/**
+ * 프롬프트 상태 갱신. 매 렌더 프레임 1회, `drawHud` 안에서만 불린다.
+ *
+ * 한 번 띄우고 시간이 다 되면 그 안내는 **끝난 것으로 확정**한다(taught + 저장).
+ * ponytail: 그래서 안내를 흘려보낸 사람은 다시 못 본다 — 대신 `H` 조작법 패널이
+ * 언제든 열린다. 반복 노출이 필요하다고 판단되면 여기에 표시 횟수(2회 상한)를 둘 것.
+ */
+function updatePrompt(s: Session): void {
+  if (helpOpen || s.paused) return;
+  loadTaught();
+  promptClock++;
+
+  // 마스크에 실려 오는 세 키는 여기서 직접 배움 판정을 한다.
+  const inp = liveBody(s)?.lastInput ?? 0;
+  if ((inp & (IN_UP | IN_DOWN | IN_LEFT | IN_RIGHT)) !== 0) learnPrompt('MOVE');
+  if ((inp & IN_INTERACT) !== 0) learnPrompt('INTERACT');
+  if ((inp & IN_RUN) !== 0) learnPrompt('RUN');
+
+  if (promptId !== null && promptClock >= promptEnd) {
+    taught.add(promptId);
+    saveTaught();
+    promptId = null;
+  }
+  if (promptId !== null || s.phase !== 'PLAY' || s.awaitingOverwritePick) return;
+
+  for (const id of PROMPT_ORDER) {
+    if (taught.has(id)) continue;
+    if (!promptArmed(id, s)) continue;
+    promptId = id;
+    promptStart = promptClock;
+    promptEnd = promptClock + PROMPT_FRAMES;
+    return;
+  }
+}
+
+function promptAlpha(): number {
+  const inA = (promptClock - promptStart) / PROMPT_FADE_IN;
+  const outA = (promptEnd - promptClock) / PROMPT_FADE_OUT;
+  return Math.max(0, Math.min(1, inA, outA));
+}
+
+/**
+ * 프롬프트 한 개. 조작 중인 몸 **위쪽**에 붙되 화면 밖으로 나가지 않고,
+ * 좌하단 속말·상단 계기판·터치 패드 어느 것도 가리지 않는 띠 안으로 클램프된다.
+ */
+function drawPrompt(
+  ctx: CanvasRenderingContext2D,
+  s: Session,
+  cam: { x: number; y: number } | null,
+): void {
+  if (promptId === null || helpOpen || s.paused || s.awaitingOverwritePick) return;
+  const a = promptAlpha();
+  if (a <= 0) return;
+  const c = PROMPT_COPY[promptId];
+  const big = c.big === true;
+  const keySize = big ? 20 : 14;
+  const textSize = big ? 15 : 12;
+  const key = touchUi ? c.touchKey : c.key;
+
+  const cap = key === '' ? { w: 0, h: 0 } : keycapBox(ctx, key, { size: keySize, touch: touchUi });
+  const gap = key === '' ? 0 : 12;
+  ctx.font = font(textSize, 'bold');
+  const tw = Math.round(ctx.measureText(c.line).width);
+  const w = 15 + cap.w + gap + tw + 15;
+  const h = Math.max(cap.h + 12, textSize + 24);
+
+  // 몸의 화면 좌표. 카메라를 못 받았으면 화면 중앙에 둔다(안내가 사라지는 편보다 낫다).
+  const me = liveBody(s);
+  const cx = me !== undefined && cam !== null ? cam.x + (me.x + BODY_SUB / 2) / SUBPIXEL : CANVAS_W / 2;
+  const cy = me !== undefined && cam !== null ? cam.y + (me.y + BODY_SUB / 2) / SUBPIXEL : CANVAS_H / 2;
+
+  const top = touchUi ? PROMPT_TOP_TOUCH : PROMPT_TOP;
+  const bottom = touchUi ? PROMPT_BOTTOM_TOUCH : PROMPT_BOTTOM;
+  let x = Math.round(cx - w / 2);
+  let y = Math.round(cy - PROMPT_OFFSET - h);
+  // 위가 좁으면 아래로 뒤집는다 — 몸 위에 겹쳐 놓지는 않는다.
+  if (y < top) y = Math.round(cy + PROMPT_OFFSET);
+  x = Math.max(PROMPT_MARGIN, Math.min(CANVAS_W - PROMPT_MARGIN - w, x));
+  y = Math.max(top, Math.min(bottom - h, y));
+
+  plate(ctx, x, y, w, h, 0.96 * a);
+  frame(ctx, x, y, w, h, c.color, (big ? 0.8 : 0.5) * a, big ? 2 : 1);
+  rivets(ctx, x, y, w, h);
+  // 핵심 동작에만 경고 사선 — 산업 현장에서 "이게 그거다"라고 말하는 방식.
+  if (big) hazard(ctx, x + 2, y + h - 5, w - 4, 3, 0.75 * a);
+
+  // 말꼬리: 이 안내가 **그 몸**에 붙은 것임을 말한다.
+  const tipX = Math.max(x + 12, Math.min(x + w - 12, Math.round(cx)));
+  const above = y + h <= cy;
+  ctx.fillStyle = withAlpha(C_PLATE, 0.96 * a);
+  ctx.beginPath();
+  if (above) {
+    ctx.moveTo(tipX - 6, y + h - 1);
+    ctx.lineTo(tipX + 6, y + h - 1);
+    ctx.lineTo(tipX, y + h + 6);
+  } else {
+    ctx.moveTo(tipX - 6, y + 1);
+    ctx.lineTo(tipX + 6, y + 1);
+    ctx.lineTo(tipX, y - 6);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  let ix = x + 15;
+  if (key !== '') {
+    drawKeycap(ctx, ix, y + Math.round((h - cap.h) / 2), key, {
+      size: keySize,
+      color: c.color,
+      alpha: a,
+      touch: touchUi,
+    });
+    ix += cap.w + gap;
+  }
+  stencil(
+    ctx,
+    c.line,
+    ix,
+    y + Math.round(h / 2) + Math.round(textSize * 0.36),
+    textSize,
+    withAlpha(big ? c.color : C_STENCIL, a),
+    'left',
+  );
+}
+
+// ── 조작법 패널 (H / ?) ────────────────────────────────────────────────────
+//
+// 키-동작 1:1 나열이 아니라 **기능별 묶음 + 평범한 말**이다. 플레이어가 알고 싶은 것은
+// "R 이 무엇인가"가 아니라 "여기서 내가 뭘 할 수 있나"이므로, 제목이 그 질문의 답이다.
+
+interface HelpRow {
+  /** 키보드 키캡들. 여러 개면 `join` 으로 잇는다. */
+  keys: readonly string[];
+  /** 터치 버튼 이름들. 손가락에게 키 이름은 거짓 정보다. */
+  touchKeys: readonly string[];
+  join?: string;
+  line: string;
+  color?: string;
+}
+
+interface HelpGroup {
+  title: string;
+  rows: readonly HelpRow[];
+  /** 묶음 아래 한 줄 — 왜 이걸 하는지. */
+  note?: string;
+}
+
+const HELP_GROUPS: readonly HelpGroup[] = [
+  {
+    title: '움직이기',
+    rows: [
+      { keys: ['WASD', '↑ ← ↓ →'], touchKeys: ['왼쪽 스틱'], join: '/', line: '방을 돌아다닌다' },
+      {
+        keys: ['SHIFT'],
+        touchKeys: ['링 밖까지'],
+        line: '달리기 — 발소리가 남고, 간수가 그 소리를 조사하러 온다',
+        color: C_DANGER,
+      },
+    ],
+  },
+  {
+    title: '나를 남기기',
+    rows: [
+      {
+        keys: ['R'],
+        touchKeys: ['COMMIT'],
+        line: '지금까지의 나를 잔상으로 남기고 루프를 되감는다',
+        color: C_LOOT,
+      },
+    ],
+    note: '잔상은 궤적이 아니라 입력 테이프다 — 과거의 나가 같은 키를 다시 누른다. 혼자서는 못 누르는 두 버튼을 그렇게 함께 누른다.',
+  },
+  {
+    title: '고치기',
+    rows: [
+      {
+        keys: ['Q', '1 / 2 / 3'],
+        touchKeys: ['Q'],
+        join: '+',
+        line: '잔상 하나를 지우고 그 자리를 다시 녹화 — 스테이지당 1회',
+      },
+      {
+        keys: ['BACKSPACE'],
+        touchKeys: ['⟲'],
+        line: '2초 홀드 = 스테이지 전체 초기화. DEBT +1 은 지워지지 않는다',
+        color: C_DANGER,
+      },
+    ],
+  },
+  {
+    title: '그 외',
+    rows: [
+      { keys: ['E'], touchKeys: ['E'], line: '눈앞의 버튼 · 레버를 만진다' },
+      { keys: ['ESC'], touchKeys: ['II'], line: '일시정지' },
+      { keys: ['M'], touchKeys: ['뮤트'], line: '소리 끄기 / 켜기' },
+      { keys: ['−', '='], touchKeys: [], join: '/', line: '마이크 감도 (LISTEN 모드) — 현장이 시끄러우면 낮춘다' },
+    ],
+  },
+];
+
+const HELP_PANEL = { x: 70, y: 44, w: 820, h: 512 } as const;
+/** 키캡 열의 폭. 가장 긴 조합(`Q` + `1 / 2 / 3`)이 들어가는 값. */
+const HELP_KEY_COL = 156;
+const HELP_ROW_H = 30;
+const HELP_KEY_SIZE = 12;
+
+/**
+ * 조작법 패널. `H` · `?` · (터치) 우상단 `?` 로 언제든 열린다.
+ * 표가 아니라 **그림이 있는 안내**여야 하므로 모든 키를 `drawKeycap` 으로 그린다.
+ */
+export function drawHelp(ctx: CanvasRenderingContext2D): void {
+  scrim(ctx, 0.88);
+  const p = HELP_PANEL;
+  plate(ctx, p.x, p.y, p.w, p.h);
+  hazard(ctx, p.x + 2, p.y + 2, p.w - 4, 5);
+  frame(ctx, p.x, p.y, p.w, p.h, C_EDGE, 0.55, 2);
+  rivets(ctx, p.x, p.y, p.w, p.h);
+
+  stencil(ctx, 'CONTROLS', p.x + 26, p.y + 34, 10, C_STENCIL_DIM);
+  stencilBig(ctx, '조작법', CANVAS_W / 2, p.y + 42, 24, C_STENCIL, C_PLATE);
+
+  let y = p.y + 66;
+  for (const grp of HELP_GROUPS) {
+    // 묶음 제목 — 이 줄이 "여기서 내가 뭘 할 수 있나"의 답이다.
+    ctx.fillStyle = withAlpha(C_EDGE, 0.18);
+    ctx.fillRect(p.x + 26, y + 6, p.w - 52, 1);
+    stencil(ctx, grp.title, p.x + 26, y, 13, C_STRIPE);
+    y += 22;
+
+    for (const row of grp.rows) {
+      drawHelpRow(ctx, p.x + 40, y, row);
+      y += HELP_ROW_H;
+    }
+    if (grp.note !== undefined) {
+      text(ctx, grp.note, p.x + 40, y + 2, 10, withAlpha(C_TEXT_DIM, 0.95), 'left');
+      y += 20;
+    }
+    y += 8;
+  }
+
+  stencil(
+    ctx,
+    touchUi ? '아무 곳이나 탭해서 닫기' : 'H  또는  ESC  ▸  닫기',
+    CANVAS_W / 2,
+    p.y + p.h - 18,
+    11,
+    C_STENCIL_DIM,
+    'center',
+  );
+}
+
+/** 안내 한 줄: 키캡(들) + 평범한 말. 키 열의 폭은 고정이라 설명이 세로로 정렬된다. */
+function drawHelpRow(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  row: HelpRow,
+): void {
+  const keys = touchUi ? row.touchKeys : row.keys;
+  let kx = x;
+  keys.forEach((k, i) => {
+    if (i > 0 && row.join !== undefined) {
+      stencil(ctx, row.join, kx + 6, y + 18, 11, C_STENCIL_DIM, 'left', 'normal');
+      ctx.font = font(11, 'normal');
+      kx += ctx.measureText(row.join).width + 12;
+    }
+    const box = drawKeycap(ctx, kx, y + 1, k, { size: HELP_KEY_SIZE, color: row.color });
+    kx += box.w + 6;
+  });
+  // 터치에 해당 버튼이 없는 항목(마이크 감도)은 그 사실을 숨기지 않는다.
+  if (keys.length === 0) {
+    stencil(ctx, '키보드 전용', x, y + 18, 10, withAlpha(C_STENCIL_DIM, 0.8), 'left', 'normal');
+  }
+  text(ctx, row.line, x + HELP_KEY_COL, y + 18, 11, row.color ?? C_TEXT, 'left');
+}
+
+/** 우상단 `?` 버튼(터치 전용). 그리는 좌표가 곧 `HELP_HITS` 다. */
+function drawHelpButton(ctx: CanvasRenderingContext2D): void {
+  drawKeycap(ctx, HELP_BTN.x, HELP_BTN.y, '?', {
+    size: 18,
+    touch: true,
+    color: C_STENCIL_DIM,
+  });
 }
 
 // ── 플레이 방식 문구 ───────────────────────────────────────────────────────
@@ -527,10 +1023,15 @@ function stencilBig(
 
 // ── 인게임 HUD ─────────────────────────────────────────────────────────────
 
+/**
+ * @param cam 월드 원점의 화면 오프셋(`ViewState.camX/camY`). 상황별 키 프롬프트를
+ *   조작 중인 몸 옆에 붙이는 데만 쓴다. 없으면 프롬프트가 화면 중앙에 선다.
+ */
 export function drawHud(
   ctx: CanvasRenderingContext2D,
   s: Session,
   mic: MicView | null = null,
+  cam: { x: number; y: number } | null = null,
 ): void {
   ctx.textBaseline = 'alphabetic';
 
@@ -619,9 +1120,17 @@ export function drawHud(
   // 상태 갱신과 그리기를 여기서 함께 한다. 세션은 읽기만 한다 (whisper.ts 참고).
   drawWhisper(ctx, updateWhisper(s));
 
+  // ── 상황별 키 프롬프트 ──
+  // 처음 그 상황이 됐을 때만 해당 키를 띄운다. 눌러 보면 `learnPrompt` 로 지워진다.
+  updatePrompt(s);
+  drawPrompt(ctx, s, cam);
+
   // ── 오버레이 ──
   if (s.awaitingOverwritePick) drawOverwritePicker(ctx, s);
   if (s.resetHold > 0) drawResetHold(ctx, s);
+
+  // 터치 기기에서는 조작법을 열 수단이 키보드에 없으므로 `?` 버튼을 띄운다.
+  if (touchUi) drawHelpButton(ctx);
 }
 
 /**

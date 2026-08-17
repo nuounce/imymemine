@@ -815,8 +815,8 @@ function panel1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h * 0.55 }, 4, 0.5, 0.06, '#4d5f96', 0.5);
   screentone(g, r.x, r.y + r.h - 60, r.w, 60, 0.3, '#3c4a78', 0.42);
 
-  captionBox(g, r, '천장이 낯설다.', 'tl', t, 31);
-  narration(g, r, '내 방 천장에는, 야광별이 붙어 있었다.', 'br', t, 32);
+  captionBox(g, r, '...눈 떴는데, 여기 어디야.', 'tl', t, 31);
+  narration(g, r, '우리 집 천장엔 야광별 붙어 있었는데. 여긴 그냥 시멘트야.', 'br', t, 32);
 }
 
 // ── 칸 2 — 벽의 금 (익스트림 클로즈업) ─────────────────────────────────────
@@ -872,8 +872,8 @@ function panel2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   screentone(g, r.x, r.y, r.w, r.h, 0.18, '#8fa4d8', 0.16, 0.6, 5);
 
-  captionBox(g, r, '벽에 금이 그어져 있었다. 넷씩 묶어서.', 'tl', t, 41);
-  narration(g, r, '누가 그었는지는, 곧 알게 됐다.', 'br', t, 42);
+  captionBox(g, r, '금이 그어져 있어. 넷씩 묶어서.', 'tl', t, 41);
+  narration(g, r, '누가 세고 있었던 거야, 이거.', 'br', t, 42);
 }
 
 // ── 칸 3 — 손잡이 없는 문 (미디엄) ─────────────────────────────────────────
@@ -931,8 +931,8 @@ function panel3(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 5, 0.05, 0.42, '#2c3760', 0.6);
 
-  captionBox(g, r, '문에는 손잡이가 없다.', 'bl', t, 51);
-  narration(g, r, '그들은 내가 무엇을 할 수 있는지 알고 있었다.', 'tr', t, 52);
+  captionBox(g, r, '손잡이가 없네.', 'bl', t, 51);
+  narration(g, r, '내가 뭘 할 수 있는지 알고 가둔 거야, 이 사람들.', 'tr', t, 52);
 }
 
 // ── 칸 4 — 발현 (익스트림 클로즈업) ────────────────────────────────────────
@@ -1095,8 +1095,8 @@ function panel4(g: CanvasRenderingContext2D, r: Rect, t: number): void {
     g.restore();
   }
 
-  captionBox(g, r, '나는 손을 뻗었다.', 'tl', t, 61);
-  narration(g, r, '그리고 하나가, 뒤에 남았다.', 'bl', t, 62);
+  captionBox(g, r, '손을 뻗었는데,', 'tl', t, 61);
+  narration(g, r, '뭐야. 하나가 뒤에 남았어.', 'bl', t, 62);
 }
 
 /** 칸 4 의 빛만 **칸 밖으로** 번진다. 클립을 푼 뒤 거터 위에 얹는다. */
@@ -1182,8 +1182,8 @@ function panel5(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 4, 0.06, 0.38, '#2b3660', 0.55);
 
-  captionBox(g, r, '그건 나를 지우지 않는다.', 'tl', t, 71);
-  narration(g, r, '조금 전의 나를, 되풀이할 뿐이다.', 'br', t, 72);
+  captionBox(g, r, '저거 안 사라지네.', 'tl', t, 71);
+  narration(g, r, '조금 전에 내가 한 걸 그대로 하고 있잖아.', 'br', t, 72);
 }
 
 /** standing ↔ reaching 사이를 오가는 루프 포즈. 잔상은 이 한 동작만 되풀이한다. */
@@ -1272,8 +1272,8 @@ function panel6(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 4, 0.08, 0.34, '#2b3660', 0.5);
 
-  captionBox(g, r, '문은 안에서 열리지 않는다.', 'tl', t, 81);
-  narration(g, r, '누군가는 발판 위에 남아야 한다.', 'br', t, 82);
+  captionBox(g, r, '이 문, 안에서는 안 열리는 거구나.', 'tl', t, 81);
+  narration(g, r, '누가 계속 밟고 있어야 열리는 거고. 근데 나는 하나야.', 'br', t, 82);
 }
 
 // ── 칸 7 — 넷 (전면) ───────────────────────────────────────────────────────
@@ -1432,7 +1432,14 @@ function panel7(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: 0, y: 0, w: CANVAS_W, h: 190 }, 5, 0.4, 0.02, '#3a4874', 0.45);
   toneGradient(g, { x: 0, y: CANVAS_H - 150, w: CANVAS_W, h: 150 }, 5, 0.02, 0.4, '#3a4874', 0.45);
 
-  captionBox(g, { x: 40, y: 34, w: CANVAS_W - 80, h: 90 }, '그러면, 내가 남으면 된다.', 'tl', t, 91);
+  captionBox(
+    g,
+    { x: 40, y: 34, w: CANVAS_W - 80, h: 90 },
+    '...그럼 내가 남으면 되지. 넷이나 있잖아, 내가.',
+    'tl',
+    t,
+    91,
+  );
 
   // 마지막 24틱: 화면이 밝아지며 타이틀로 넘어간다.
   const flash = clamp01((t - (CUT_TICKS - 24)) / 24);
