@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>I.MY.ME.MINE — Fail now. Escape later.</title>
+    <style>
+      /* 외부 폰트·이미지 로드 금지(SPEC §0). 시스템 모노스페이스 스택만 쓴다. */
+      :root {
+        --bg: #07080d;
+        --dim: #7c88ad;
+        --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+          'Liberation Mono', monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden; /* 스크롤바 없음 */
+        background: var(--bg);
+        color: var(--dim);
+        font-family: var(--mono);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* 캔버스를 화면 중앙에 둔다. 정수배 스케일은 main.ts 가 계산해
+         canvas.style.width/height 에 픽셀로 써 넣는다. */
+      #stage {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at 50% 45%, #0d1120 0%, #07080d 70%);
+      }
+
+      #game {
+        display: block;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+        background: var(--bg);
+        /* 저해상도 캔버스가 공중에 뜬 것처럼 보이도록 하는 얇은 테두리 + 글로우 */
+        outline: 1px solid #1a1f33;
+        box-shadow:
+          0 0 0 1px #07080d,
+          0 24px 80px -20px rgba(108, 232, 255, 0.18);
+        touch-action: none;
+      }
+
+      /* 캔버스를 못 얻었을 때만 보이는 최후 안내 (main.ts 가 채운다) */
+      #fatal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+        font-size: 13px;
+        line-height: 1.7;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="game" width="960" height="600"></canvas>
+    </div>
+    <div id="fatal"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

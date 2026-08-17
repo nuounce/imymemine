@@ -1,0 +1,19 @@
+{
+  "name": "imymemine",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "I.MY.ME.MINE — 실패할 때마다 과거의 내가 동료가 되는 60초 타임루프 탈출극. Fail now. Escape later.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test --import tsx tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
