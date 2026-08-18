@@ -10,6 +10,11 @@ import { createInput, type Input, type MetaKey } from './engine/input';
 import { startLoop } from './engine/loop';
 import { createMic } from './engine/mic';
 import {
+  createSoundscape,
+  resetSoundscape,
+  updateSoundscape,
+} from './engine/soundscape';
+import {
   canvasPoint,
   createTouch,
   mergeInput,
@@ -218,6 +223,11 @@ onResize();
 
 const audio = createAudio();
 const mic = createMic();
+/**
+ * 정위 오디오의 **오디오 전용** 상태(발소리 위상 등). 시뮬 밖에 있으므로 잔상 재생에
+ * 영향을 주지 않는다 — 그 불변은 `tests/soundscape.test.ts` 가 해시로 증명한다.
+ */
+const soundscape = createSoundscape();
 const view = createView();
 let session: Session = createSession();
 
@@ -310,6 +320,7 @@ const IDLE_EVENTS: TickEvents = {
   alerted: false,
   footstep: false,
   ghostSpotted: false,
+  flashFired: false,
 };
 
 // ── SFX 엣지 트리거 ────────────────────────────────────────────────────────
@@ -338,6 +349,17 @@ function playSfx(e: TickEvents): void {
 
 function resetSfxEdges(): void {
   Object.assign(prevEvents, IDLE_EVENTS);
+  // 루프/스테이지 경계에서 정위음 위상도 함께 버린다. 안 버리면 전환 직후에
+  // "없던 발소리 한 발"이나 가짜 상태 전이(SUSPICIOUS 진입음)가 터진다.
+  resetSoundscape(soundscape);
+}
+
+/**
+ * 이번 틱에 들려야 할 정위음을 발음한다. `SimState` 는 **읽기만** 한다.
+ * EASY 에서도 난다 — 다만 사거리·게인·촘촘함이 LISTEN 보다 낮다(`soundscape.TUNING`).
+ */
+function playSoundscape(): void {
+  audio.playCues(updateSoundscape(soundscape, session.sim, session.mode));
 }
 
 // ── 페이즈 전환 ────────────────────────────────────────────────────────────
@@ -687,6 +709,10 @@ function pumpMic(): boolean {
     fallbackToEasy();
     return false;
   }
+  // 환경음 측정 2초 동안 게임의 대표 소리(발소리·경보·고함)를 **스피커로 함께**
+  // 내보낸다. 이어폰을 안 낀 사람의 바닥값에 게임 소리가 포함되므로, 실전에서
+  // 게임이 자기 소리를 듣고 스스로를 발각시키는 되먹임이 줄어든다.
+  if (p === 'CALIBRATING') audio.calibrationSample(mic.view().calibration);
   // 권한 대기와 환경음 측정 동안에는 세계를 얼린다. 바닥값을 잡기 전에 굴리면
   // 첫 2초가 그대로 레벨 3 으로 녹화돼 잔상이 영구히 간수를 부른다.
   return p === 'REQUEST' || p === 'CALIBRATING';
@@ -740,12 +766,14 @@ function onTick(): void {
       tickSession(session, mask);
       updateView(view, session.sim, session.lastEvents);
       playSfx(session.lastEvents);
+      playSoundscape();
       break;
     }
     case 'TRANSITION': {
       tickSession(session, 0);
       updateView(view, session.sim, session.lastEvents);
       playSfx(session.lastEvents);
+      playSoundscape();
       break;
     }
     case 'CLEAR':

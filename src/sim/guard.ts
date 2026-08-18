@@ -23,23 +23,40 @@ import {
   BODY_SUB,
   CHASE_LEAD_MIN_DIST,
   CHASE_LEAD_TICKS,
+  DAZE_SPIN_STEP,
   DETECT_MAX,
   DETECT_MID_BONUS,
   DETECT_NEAR_BONUS,
   DETECT_DECAY,
   DETECT_RUN_MULT,
   DETECT_SUSPICIOUS,
+  DIR_Q,
+  DIR_STEPS,
+  FLASH_RADIUS,
+  FLASH_TICKS,
   GUARD_KINDS,
   GUARD_SWEEP_PERIOD,
   GUARD_TURN_RATE,
+  HOUND_FAN_ARC,
+  HOUND_FAN_PERIOD,
+  HOUND_WIGGLE_AMP,
+  HOUND_WIGGLE_PERIOD,
   IN_DOWN,
   IN_LEFT,
   IN_RIGHT,
   IN_RUN,
   IN_UP,
   INVESTIGATE_TICKS,
+  LUNGE_BURST,
+  LUNGE_DEN,
+  LUNGE_FAST_NUM,
+  LUNGE_PERIOD,
+  LUNGE_SLOW_NUM,
   RUN_DIAG,
   RUN_SPEED,
+  SCENT_ARRIVE_EPS,
+  SCENT_LEN,
+  SCENT_STEP_TIMEOUT,
   SEARCH_OFFSETS,
   WALK_DIAG,
   WALK_SPEED,
@@ -47,7 +64,9 @@ import {
 } from './constants';
 import {
   crateRects,
+  dirCos,
   dirFromDelta,
+  dirSin,
   dist2,
   inCone,
   lineBlocked,
@@ -55,7 +74,7 @@ import {
   turnToward,
   type Rect,
 } from './physics';
-import type { Body, Guard, SimState } from './types';
+import type { Body, Guard, Scent, SimState } from './types';
 
 /** 경비가 잔상을 붙잡은 뒤 다시 흥분하기까지의 냉각 시간. 미끼가 성립하려면 필요하다. */
 const RETURN_BLIND_TICKS = 90;
@@ -135,6 +154,7 @@ function moveToward(
   tx: number,
   ty: number,
   speed: number,
+  turnRate: number,
 ): void {
   const dx = tx - guardCx(g);
   const dy = ty - guardCy(g);
@@ -153,20 +173,184 @@ function moveToward(
       const nx = sweepAxis(s, blockers, g.x, g.y, size, size, step, 0);
       if (nx !== g.x) {
         g.x = nx;
-        g.facing = turnToward(g.facing, dirFromDelta(dx, dy), GUARD_TURN_RATE);
+        g.facing = turnToward(g.facing, dirFromDelta(dx, dy), turnRate);
         return;
       }
     } else {
       const ny = sweepAxis(s, blockers, g.x, g.y, size, size, step, 1);
       if (ny !== g.y) {
         g.y = ny;
-        g.facing = turnToward(g.facing, dirFromDelta(dx, dy), GUARD_TURN_RATE);
+        g.facing = turnToward(g.facing, dirFromDelta(dx, dy), turnRate);
         return;
       }
     }
   }
   // 완전히 막혔다면 목표 방향만 바라본다.
-  g.facing = turnToward(g.facing, dirFromDelta(dx, dy), GUARD_TURN_RATE);
+  g.facing = turnToward(g.facing, dirFromDelta(dx, dy), turnRate);
+}
+
+// ── 냄새 추적 · 런지 · 좌우 흔들기 (tracksScent 유형) ──────────────────────
+
+/** 이 궤적에서 아직 살아 있는(덮이지 않은) 가장 오래된 인덱스. */
+function oldestIndex(sc: Scent): number {
+  return sc.count > SCENT_LEN ? sc.count - SCENT_LEN : 0;
+}
+
+function hasIndex(sc: Scent, i: number): boolean {
+  return i >= oldestIndex(sc) && i < sc.count;
+}
+
+function scentAt(sc: Scent, i: number): { x: number; y: number } {
+  const slot = i % SCENT_LEN;
+  return { x: sc.x[slot] ?? 0, y: sc.y[slot] ?? 0 };
+}
+
+/** 그 점을 남긴 틱. 몸마다 기록 빈도가 달라 인덱스로는 나이를 비교할 수 없다. */
+function scentTick(sc: Scent, i: number): number {
+  return sc.t[i % SCENT_LEN] ?? 0;
+}
+
+/**
+ * 궤적의 주인. **시체가 되어도 그 궤적은 남는다** — 궤적은 "지금 저기 누가 있다"가
+ * 아니라 "여기를 누가 지나갔다"는 기록이기 때문이다. 시체를 시야로 감지하지 않는
+ * 규칙(SPEC §5.3)은 그대로이고, 냄새를 끝까지 따라가도 시체는 체포되지 않는다.
+ * 실패한 잔상이 여전히 미끼로 유효하다는 SPEC §3-2 와도 같은 방향이다.
+ */
+function scentOwner(s: SimState, bodyId: number): Body | null {
+  for (let i = 0; i < s.bodies.length; i++) {
+    const b = s.bodies[i]!;
+    if (b.id === bodyId) return b;
+  }
+  return null;
+}
+
+function clearScent(g: Guard): void {
+  g.scentBodyId = -1;
+  g.scentIndex = -1;
+  g.scentTimer = 0;
+}
+
+function lockScent(g: Guard, bodyId: number, index: number): void {
+  g.scentBodyId = bodyId;
+  g.scentIndex = index;
+  g.scentTimer = SCENT_STEP_TIMEOUT;
+}
+
+/**
+ * 물고 있던 점을 지나 **다음(더 최신) 점**으로 옮긴다.
+ * 최신 점까지 다 훑었으면 `scentIndex = -1` 로 두어 "이 궤적은 끝났다"를 표시한다 —
+ * 그래야 다음 틱에 또 가장 오래된 점을 다시 물어 제자리를 맴돌지 않는다.
+ */
+function advanceScent(g: Guard, sc: Scent): void {
+  const next = g.scentIndex + 1;
+  if (hasIndex(sc, next)) {
+    g.scentIndex = next;
+    g.scentTimer = SCENT_STEP_TIMEOUT;
+  } else {
+    g.scentIndex = -1;
+    g.scentTimer = 0;
+  }
+}
+
+/**
+ * 냄새 자물쇠 갱신. 감지 범위 안에 있는 **가장 오래된** 궤적점부터 물고,
+ * 닿을 때마다 한 점씩 최신 쪽으로 옮겨간다. 그래서 개는 대상이 지금 어디 있든
+ * **그 대상이 지나간 길**을 되짚는다.
+ *
+ * 후보가 여럿이면 인덱스가 작은 쪽(= 먼저 지나간 쪽), 동률이면 id 낮은 쪽.
+ * 모든 몸이 같은 틱에 점을 남기므로 인덱스 비교가 곧 시간 비교다.
+ * 잔상도 궤적을 남기므로 여기서 **잔상의 옛 궤적이 대상의 최신 궤적을 이긴다** —
+ * 이 아이템 같은 반격이 성립하는 지점이다.
+ */
+function updateScent(s: SimState, g: Guard, spec: GuardKindSpec): void {
+  if (g.scentBodyId >= 0) {
+    const owner = scentOwner(s, g.scentBodyId);
+    if (owner === null) {
+      clearScent(g);
+    } else if (g.scentIndex < 0) {
+      return; // 이 궤적은 끝까지 훑었다 — 이제 직행한다.
+    } else if (!hasIndex(owner.scent, g.scentIndex)) {
+      // 링버퍼가 그 점을 덮어썼다. 남아 있는 가장 오래된 점부터 다시.
+      g.scentIndex = oldestIndex(owner.scent);
+      g.scentTimer = SCENT_STEP_TIMEOUT;
+      return;
+    } else {
+      const p = scentAt(owner.scent, g.scentIndex);
+      if (
+        Math.abs(p.x - guardCx(g)) <= SCENT_ARRIVE_EPS &&
+        Math.abs(p.y - guardCy(g)) <= SCENT_ARRIVE_EPS
+      ) {
+        advanceScent(g, owner.scent);
+      } else if (--g.scentTimer <= 0) {
+        // 벽 모서리에 걸렸다 — 한 점에 영원히 매달리지 않는다.
+        advanceScent(g, owner.scent);
+      }
+      return;
+    }
+  }
+
+  const range2 = spec.viewRange * spec.viewRange;
+  let bestBody = -1;
+  let bestIndex = -1;
+  let bestTick = 0;
+  for (let i = 0; i < s.bodies.length; i++) {
+    const b = s.bodies[i]!;
+    const sc = b.scent;
+    for (let k = oldestIndex(sc); k < sc.count; k++) {
+      const p = scentAt(sc, k);
+      if (dist2(guardCx(g), guardCy(g), p.x, p.y) > range2) continue;
+      // 한 궤적 안에서는 인덱스 순이 곧 시간 순이므로 첫 후보가 그 몸의 최고참이다.
+      const tk = scentTick(sc, k);
+      // 몸이 여럿이면 **더 오래 전에 남긴 냄새**가 이긴다. 동률이면 id 낮은 쪽.
+      if (bestBody < 0 || tk < bestTick) {
+        bestBody = b.id;
+        bestIndex = k;
+        bestTick = tk;
+      }
+      break;
+    }
+  }
+  if (bestBody >= 0) lockScent(g, bestBody, bestIndex);
+}
+
+/** 지금 향해야 할 궤적점. null 이면 냄새가 없으니 목표로 직행한다. */
+function scentTarget(s: SimState, g: Guard): { x: number; y: number } | null {
+  if (g.scentBodyId < 0 || g.scentIndex < 0) return null;
+  const owner = scentOwner(s, g.scentBodyId);
+  if (owner === null || !hasIndex(owner.scent, g.scentIndex)) return null;
+  return scentAt(owner.scent, g.scentIndex);
+}
+
+/**
+ * 런지. 주기 앞부분은 ×1.35, 뒷부분은 ×0.6. 정수 분수만 쓴다.
+ * 확 치고 나갔다 잠깐 숨을 고르는 리듬이 "개처럼"의 절반이다.
+ */
+function lungeSpeed(base: number, phase: number): number {
+  const p = ((phase % LUNGE_PERIOD) + LUNGE_PERIOD) % LUNGE_PERIOD;
+  const num = p < LUNGE_BURST ? LUNGE_FAST_NUM : LUNGE_SLOW_NUM;
+  return ((base * num) / LUNGE_DEN) | 0;
+}
+
+/**
+ * 진행 방향에 **수직**으로 미세하게 흔든 이동 목표.
+ * 수직 방향은 facing 테이블에서 뽑으므로 sqrt 도 부동소수도 없다.
+ * 진폭은 `SCENT_ARRIVE_EPS` 보다 작아 궤적점 도착 판정을 방해하지 않는다.
+ */
+function wiggleTarget(
+  g: Guard,
+  tx: number,
+  ty: number,
+  phase: number,
+): { x: number; y: number } {
+  const dx = tx - guardCx(g);
+  const dy = ty - guardCy(g);
+  if (dx === 0 && dy === 0) return { x: tx, y: ty };
+  const perp = (dirFromDelta(dx, dy) + DIR_STEPS / 4) % DIR_STEPS;
+  const amp = sweepOffset(phase, HOUND_WIGGLE_AMP, HOUND_WIGGLE_PERIOD);
+  return {
+    x: tx + (((dirCos(perp) * amp) / DIR_Q) | 0),
+    y: ty + (((dirSin(perp) * amp) / DIR_Q) | 0),
+  };
 }
 
 function arrived(g: Guard, tx: number, ty: number): boolean {
@@ -242,9 +426,11 @@ function beginInvestigate(g: Guard, x: number, y: number): void {
   g.targetBodyId = -1;
   g.searchStep = -1;
   g.stateTimer = INVESTIGATE_TICKS;
+  // 부채꼴 훑기는 수색을 시작하는 순간부터 센다 (tracksScent 유형만 읽는 값이다).
+  if (GUARD_KINDS[g.kind].tracksScent) g.sweepPhase = 0;
 }
 
-function hearNoise(s: SimState, g: Guard): void {
+function hearNoise(s: SimState, g: Guard, spec: GuardKindSpec): void {
   if (g.state === 'CHASE') return;
   for (let i = 0; i < s.noises.length; i++) {
     const n = s.noises[i]!;
@@ -255,6 +441,11 @@ function hearNoise(s: SimState, g: Guard): void {
       return;
     }
     beginInvestigate(g, n.x, n.y);
+    // 개는 소리가 난 쪽으로 **지연 없이** 고개를 돌린다. 나머지 유형은 회전 속도에
+    // 묶여 한 틱에 turnRate 만큼만 돈다 — 그 차이가 이 유형의 위협이다.
+    if (spec.tracksScent) {
+      g.facing = dirFromDelta(n.x - guardCx(g), n.y - guardCy(g));
+    }
     return;
   }
 }
@@ -280,10 +471,21 @@ function updateOne(
   alarms: Alarm[],
 ): void {
   const spec = specOf(g);
-  if (g.state === 'RETURN' && g.stateTimer > 0) g.stateTimer--;
   if (g.alarmCooldown > 0) g.alarmCooldown--;
 
-  hearNoise(s, g);
+  // 눈뽕에 맞은 동안은 보지도 듣지도 움직이지도 못하고 제자리에서 돈다.
+  // 시야 거리 0 과 감지 0 을 규칙으로 따로 쓰지 않고 **갱신 자체를 건너뛰어**
+  // 보장한다 — 그래서 WATCHER 도 이 동안은 경보를 울릴 수 없다.
+  if (g.dazed > 0) {
+    g.dazed--;
+    g.detect = 0;
+    g.facing = (g.facing + DAZE_SPIN_STEP) % DIR_STEPS;
+    return;
+  }
+
+  if (g.state === 'RETURN' && g.stateTimer > 0) g.stateTimer--;
+
+  hearNoise(s, g, spec);
 
   const blind = g.state === 'RETURN' && g.stateTimer > 0;
   const seen = blind ? null : sense(s, g, blockers);
@@ -310,6 +512,8 @@ function updateOne(
       // 추격 **진입** 순간에만 경보를 울린다. 매 틱 울리면 주변 경비가
       // 수색을 시작하지도 못하고 계속 기준점으로 되감긴다.
       g.state = 'CHASE';
+      // 런지 리듬은 무는 순간부터 센다 (다른 유형에서는 계속 0 이다).
+      g.lungePhase = 0;
       alarms.push({ fromId: g.id, x: g.targetX, y: g.targetY });
     }
     g.targetBodyId = seen !== null ? seen.id : g.targetBodyId;
@@ -339,6 +543,13 @@ function updateOne(
     g.stateTimer = 0;
   }
 
+  // 냄새는 추적 중(CHASE/INVESTIGATE)에만 물고 있는다. 순찰로 돌아가면 놓는다.
+  if (spec.tracksScent) {
+    g.lungePhase++;
+    if (g.state === 'CHASE' || g.state === 'INVESTIGATE') updateScent(s, g, spec);
+    else clearScent(g);
+  }
+
   switch (g.state) {
     case 'PATROL': {
       if (g.path.length === 0) {
@@ -357,7 +568,7 @@ function updateOne(
         }
       } else {
         g.waitTimer = 0;
-        moveToward(s, blockers, g, wp.x, wp.y, spec.patrolSpeed);
+        moveToward(s, blockers, g, wp.x, wp.y, spec.patrolSpeed, GUARD_TURN_RATE);
         // 스윕의 기준은 **순찰이 정한 방향**이다. 여기서만 갱신하므로,
         // 한눈판 뒤(SUSPICIOUS/CHASE 로 목표를 향해 돌아간 뒤) 초소로 돌아와도
         // 그때의 facing 이 새 정면이 되지 않는다. 웨이포인트가 하나뿐이라
@@ -370,14 +581,19 @@ function updateOne(
       // 멈춰서 마지막 목격 지점을 바라본다.
       const dx = g.targetX - guardCx(g);
       const dy = g.targetY - guardCy(g);
-      g.facing = turnToward(g.facing, dirFromDelta(dx, dy), GUARD_TURN_RATE);
+      g.facing = turnToward(g.facing, dirFromDelta(dx, dy), spec.turnRate);
       break;
     }
     case 'INVESTIGATE': {
       // 예산은 이동까지 포함해 매 틱 소모된다. 예전처럼 도착 후에만 줄이면
       // 닿을 수 없는 지점을 향해 영원히 걸어가는 경비가 생긴다.
       g.stateTimer--;
-      if (arrived(g, g.targetX, g.targetY)) {
+      const trail = spec.tracksScent ? scentTarget(s, g) : null;
+      if (trail !== null) {
+        // 냄새를 물었다면 기준점·오프셋을 무시하고 **지나간 길**을 되짚는다.
+        const w = wiggleTarget(g, trail.x, trail.y, g.lungePhase);
+        moveToward(s, blockers, g, w.x, w.y, spec.investigateSpeed, spec.turnRate);
+      } else if (arrived(g, g.targetX, g.targetY)) {
         if (g.searchStep < SEARCH_OFFSETS.length - 1) {
           // 도착했으면 서 있지 말고 주변을 훑는다. 오프셋은 고정 배열이다.
           g.searchStep++;
@@ -385,10 +601,19 @@ function updateOne(
           g.targetX = g.anchorX + off.x;
           g.targetY = g.anchorY + off.y;
         } else {
-          g.facing = (g.facing + 1) % 64;
+          g.facing = (g.facing + 1) % DIR_STEPS;
         }
       } else {
-        moveToward(s, blockers, g, g.targetX, g.targetY, spec.investigateSpeed);
+        moveToward(s, blockers, g, g.targetX, g.targetY, spec.investigateSpeed, spec.turnRate);
+      }
+      // 냄새를 못 찾은 개는 목표 방향을 중심으로 좌우를 부채꼴로 훑는다.
+      // 위상 0 에서 오프셋이 0 이라, 소음을 들은 그 틱의 "즉시 고개 돌리기"를 덮지 않는다.
+      if (trail === null && spec.tracksScent) {
+        const base = dirFromDelta(g.targetX - guardCx(g), g.targetY - guardCy(g));
+        g.facing =
+          (base + sweepOffset(g.sweepPhase, HOUND_FAN_ARC, HOUND_FAN_PERIOD) + DIR_STEPS) %
+          DIR_STEPS;
+        g.sweepPhase++;
       }
       if (g.stateTimer <= 0) {
         g.state = 'RETURN';
@@ -405,7 +630,24 @@ function updateOne(
       }
       // 대상을 잃어도 마지막 지점까지 밀어붙인다. 추격을 끝내는 것은 오직
       // `chaseTimer` 다 — 도착했다고 곧바로 접으면 유형별 지속 시간이 무의미해진다.
-      moveToward(s, blockers, g, g.targetX, g.targetY, spec.chaseSpeed);
+      const trail = spec.tracksScent ? scentTarget(s, g) : null;
+      let mx = trail?.x ?? g.targetX;
+      let my = trail?.y ?? g.targetY;
+      const speed = spec.tracksScent
+        ? lungeSpeed(spec.chaseSpeed, g.lungePhase)
+        : spec.chaseSpeed;
+      if (spec.tracksScent) {
+        // 코앞에서는 흔들지 않는다 — 흔들다 몸을 스쳐 지나가면 체포가 우연이 된다.
+        const close =
+          dist2(guardCx(g), guardCy(g), g.targetX, g.targetY) <=
+          CHASE_LEAD_MIN_DIST * CHASE_LEAD_MIN_DIST;
+        if (!close) {
+          const w = wiggleTarget(g, mx, my, g.lungePhase);
+          mx = w.x;
+          my = w.y;
+        }
+      }
+      moveToward(s, blockers, g, mx, my, speed, spec.turnRate);
       break;
     }
     case 'RETURN': {
@@ -422,7 +664,7 @@ function updateOne(
         g.waitTimer = 0;
         g.state = 'PATROL';
       } else {
-        moveToward(s, blockers, g, wp.x, wp.y, spec.patrolSpeed);
+        moveToward(s, blockers, g, wp.x, wp.y, spec.patrolSpeed, GUARD_TURN_RATE);
       }
       break;
     }
@@ -473,6 +715,33 @@ function applyAlarms(s: SimState, alarms: readonly Alarm[], order: readonly numb
       }
       beginInvestigate(g, al.x, al.y);
     }
+  }
+}
+
+/**
+ * 눈뽕 폭발 (SPEC 확장). 사용 지점 반경 안이면서 **시야가 통하는** 경비만 어지러워진다 —
+ * 벽 뒤는 안 걸린다. 판정 순서는 id 오름차순이고 난수는 쓰지 않는다.
+ *
+ * 추격 중이던 경비는 그 자리에서 `INVESTIGATE` 로 떨어진다. 마지막으로 본 지점을
+ * 기준점으로 남기므로 **완전히 놓치는 게 아니라 잠깐 잃는 것**이다.
+ */
+export function applyFlash(
+  s: SimState,
+  x: number,
+  y: number,
+  blockers: readonly Rect[],
+): void {
+  const order = idOrder(s.guards);
+  for (let i = 0; i < order.length; i++) {
+    const g = s.guards[order[i]!]!;
+    const gx = guardCx(g);
+    const gy = guardCy(g);
+    if (dist2(gx, gy, x, y) > FLASH_RADIUS * FLASH_RADIUS) continue;
+    if (lineBlocked(s, blockers, x, y, gx, gy)) continue;
+    if (g.state === 'CHASE') beginInvestigate(g, g.targetX, g.targetY);
+    clearScent(g);
+    g.dazed = FLASH_TICKS;
+    g.detect = 0;
   }
 }
 

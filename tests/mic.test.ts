@@ -54,7 +54,7 @@ const MOVE_BITS = [IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT, IN_RUN];
 
 /** 이동 비트와 마이크 비트가 **둘 다** 들어 있는, 사람 조작 모양의 무작위 테이프. */
 function noisyTape(rnd: () => number, length: number): Tape {
-  const out = new Uint8Array(length);
+  const out = new Uint16Array(length);
   let move = 0;
   let level = 0;
   let hold = 0;
@@ -115,7 +115,7 @@ describe('LISTEN: 마이크 비트가 섞여도 재생 오차는 정확히 0 이
     // 잔상의 궤적은 동일해야 한다. (실시간 마이크가 잔상에 새는 경로가 없다는 확인.)
     const level = STAGES[0]!;
     const ghost: GhostSpec = {
-      tape: Uint8Array.from(
+      tape: Uint16Array.from(
         Array.from({ length: 200 }, (_, i) => IN_RIGHT | mic(i % 4)),
       ),
       corpse: false,
@@ -233,7 +233,8 @@ describe('LISTEN: 마이크 비트는 이동 비트를 오염시키지 않는다
     for (let lv = 0; lv <= 3; lv++) {
       assert.equal(micLevelOf(MOVE_ALL | mic(lv)), lv);
     }
-    // 테이프는 Uint8Array 다 — 마이크 비트까지 실어도 한 바이트에 들어가야 한다.
+    // 이동 + 마이크는 여전히 **한 바이트 안**이다. 테이프가 16비트로 넓어진 것은
+    // 눈뽕(비트 8) 때문이며, 마이크 비트 배치는 한 칸도 움직이지 않았다.
     assert.ok((MOVE_ALL | mic(3)) <= 255);
   });
 });

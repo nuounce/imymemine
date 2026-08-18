@@ -20,6 +20,7 @@ import {
   GRATE_NOISE_RADIUS,
   GUARD_KINDS,
   IN_DOWN,
+  IN_FLASH,
   IN_INTERACT,
   IN_LEFT,
   IN_RIGHT,
@@ -35,6 +36,8 @@ import {
   NOISE_RADIUS,
   RUN_DIAG,
   RUN_SPEED,
+  SCENT_INTERVAL,
+  SCENT_LEN,
   TILE_SUB,
   WALK_DIAG,
   WALK_SPEED,
@@ -48,7 +51,7 @@ import {
   updateCctvs,
   updateDevices,
 } from './devices';
-import { resolveCapture, updateGuards } from './guard';
+import { applyFlash, resolveCapture, updateGuards } from './guard';
 import {
   aabbOverlap,
   dirFromDelta,
@@ -132,6 +135,8 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
     spotted: false,
     lastInput: 0,
     noiseTimer: 0,
+    hasFlash: false,
+    scent: { x: [], y: [], t: [], count: 0 },
     tape,
     becomesCorpse,
   });
@@ -196,6 +201,11 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
         searchStep: -1,
         chaseTimer: 0,
         alarmCooldown: 0,
+        dazed: 0,
+        scentBodyId: -1,
+        scentIndex: -1,
+        scentTimer: 0,
+        lungePhase: 0,
       };
     }),
     cctvs: (level.cctvs ?? []).map((c) => ({
@@ -279,6 +289,12 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
       channels: b.channels.slice(),
       activeIndex: -1,
       prevOn: b.channels.map(() => false),
+    })),
+    flashes: (level.flashes ?? []).map((f) => ({
+      id: id(),
+      x: tileTopLeft(f.tx),
+      y: tileTopLeft(f.ty),
+      taken: false,
     })),
     loot: {
       id: id(),
@@ -420,10 +436,13 @@ export function stepWorld(s: SimState, liveInput: InputMask): TickEvents {
     alerted: false,
     footstep: false,
     ghostSpotted: false,
+    flashFired: false,
   };
   if (s.outcome !== 'RUNNING') return ev;
 
   const staticRects: Rect[] = closedGateRects(s);
+  /** 이번 틱에 눈뽕을 터뜨린 몸. 폭발은 4.5 단계에서 한꺼번에 해결한다. */
+  const flashUsers: Body[] = [];
 
   // 1) 입력 적용 (id 오름차순)
   for (let i = 0; i < s.bodies.length; i++) {
@@ -435,6 +454,12 @@ export function stepWorld(s: SimState, liveInput: InputMask): TickEvents {
     if (!b.alive || b.frozen) continue;
     if ((mask & IN_INTERACT) !== 0 && (prev & IN_INTERACT) === 0) {
       if (tryInteract(s, b)) ev.interacted = true;
+    }
+    // 눈뽕도 상호작용과 같은 **엣지** 규칙이다. 비트를 계속 누르고 있어도 한 번만 터진다.
+    // 잔상은 자기 테이프에 녹화된 이 비트를 그대로 재생한다 —
+    // 과거의 내가 정확한 순간에 터뜨려 주는 그림이 이 아이템의 존재 이유다.
+    if ((mask & IN_FLASH) !== 0 && (prev & IN_FLASH) === 0 && b.hasFlash) {
+      flashUsers.push(b);
     }
   }
 
@@ -468,6 +493,31 @@ export function stepWorld(s: SimState, liveInput: InputMask): TickEvents {
     const mv = moveBody(s, staticRects, b.x, b.y, BODY_SUB, BODY_SUB, sx * sp, sy * sp);
     b.x = mv.x;
     b.y = mv.y;
+  }
+
+  // 3.5) 냄새 — 살아있는 몸이 지나간 자리를 링버퍼에 남긴다.
+  // 잔상도 예외가 아니다: 그래서 잔상이 지나간 길이 HOUND 를 엉뚱한 곳으로 끈다.
+  //
+  // **자리가 바뀌었을 때만** 찍는다. 서 있는 동안에도 찍으면 링버퍼(40칸)가 같은
+  // 좌표로 가득 차 **자기가 지나온 길을 스스로 지운다** — 발판 위에 서서 확정하는
+  // 이 게임의 기본 전략(SPEC §3-1)을 쓰는 순간 궤적이 통째로 사라진다.
+  if (s.tick % SCENT_INTERVAL === 0) {
+    for (let i = 0; i < s.bodies.length; i++) {
+      const b = s.bodies[i]!;
+      if (!b.alive || b.frozen) continue;
+      const sc = b.scent;
+      const cx = b.x + BODY_SUB / 2;
+      const cy = b.y + BODY_SUB / 2;
+      if (sc.count > 0) {
+        const last = (sc.count - 1) % SCENT_LEN;
+        if (sc.x[last] === cx && sc.y[last] === cy) continue;
+      }
+      const slot = sc.count % SCENT_LEN;
+      sc.x[slot] = cx;
+      sc.y[slot] = cy;
+      sc.t[slot] = s.tick;
+      sc.count++;
+    }
   }
 
   // 4) 소음 — 달리기 / 마이크 / 소음 바닥이 **같은 경로**를 탄다.
@@ -514,6 +564,29 @@ export function stepWorld(s: SimState, liveInput: InputMask): TickEvents {
     // footstep 은 "발소리"라는 청각 피드백 전용이다. 마이크 소음은 플레이어가
     // 이미 자기 귀로 듣고 있으므로 발소리 SFX 를 덧씌우지 않는다.
     if (running) ev.footstep = true;
+  }
+
+  // 4.5) 눈뽕 — 줍기와 터뜨리기. **경비 AI 앞**이라 폭발이 같은 틱에 즉시 먹는다.
+  for (let i = 0; i < flashUsers.length; i++) {
+    const b = flashUsers[i]!;
+    b.hasFlash = false;
+    applyFlash(s, b.x + BODY_SUB / 2, b.y + BODY_SUB / 2, staticRects);
+    ev.flashFired = true;
+  }
+  for (let i = 0; i < s.bodies.length; i++) {
+    const b = s.bodies[i]!;
+    if (!b.alive || b.frozen || b.hasFlash) continue;
+    for (let f = 0; f < s.flashes.length; f++) {
+      const item = s.flashes[f]!;
+      if (item.taken) continue;
+      if (!aabbOverlap(b.x, b.y, BODY_SUB, BODY_SUB, item.x, item.y, TILE_SUB, TILE_SUB)) {
+        continue;
+      }
+      // 한 번에 하나만 든다. 주운 틱에는 쓸 수 없다(사용 판정이 이미 지나갔다).
+      item.taken = true;
+      b.hasFlash = true;
+      break;
+    }
   }
 
   // 5) 경비 AI

@@ -368,7 +368,7 @@ function walkOutGhost(stand: number): Tape {
   push(2 /* IN_DOWN */, 32); // (1,1) → (1,3)
   push(IN_RIGHT, 64); // → (5,3)
   push(0, stand);
-  return Uint8Array.from(out);
+  return Uint16Array.from(out);
 }
 
 /**
@@ -379,7 +379,7 @@ function oneNoiseGhost(): Tape {
   const out: number[] = [];
   for (let i = 0; i < 32; i++) out.push(2 /* IN_DOWN */);
   for (let i = 0; i < 12; i++) out.push(IN_RIGHT | IN_RUN);
-  return Uint8Array.from(out);
+  return Uint16Array.from(out);
 }
 
 /** 잔상이 시체가 된 뒤 경비가 CHASE 로 버틴 틱 수. */
@@ -583,8 +583,8 @@ describe('결정론 — 4종 + 경보 전파가 도는 레벨', () => {
     const live = mixedTape(900);
     const play = (): { hash: number; tick: number; alerts: number } => {
       const sim = createWorld(LV_MIXED, [
-        { tape: Uint8Array.from(mixedTape(300)), corpse: true },
-        { tape: Uint8Array.from(mixedTape(500)), corpse: false },
+        { tape: Uint16Array.from(mixedTape(300)), corpse: true },
+        { tape: Uint16Array.from(mixedTape(500)), corpse: false },
       ]);
       for (let t = 0; t < live.length && sim.outcome === 'RUNNING'; t++) stepWorld(sim, live[t]!);
       return { hash: hashState(sim), tick: sim.tick, alerts: sim.alerts };
@@ -595,7 +595,7 @@ describe('결정론 — 4종 + 경보 전파가 도는 레벨', () => {
   it('경보가 실제로 전파되는 레벨인지 확인한다 (테스트가 헛돌지 않게)', () => {
     let alarmed = false;
     const live = mixedTape(900);
-    const sim = createWorld(LV_MIXED, [{ tape: Uint8Array.from(mixedTape(300)), corpse: false }]);
+    const sim = createWorld(LV_MIXED, [{ tape: Uint16Array.from(mixedTape(300)), corpse: false }]);
     for (let t = 0; t < live.length && sim.outcome === 'RUNNING'; t++) {
       stepWorld(sim, live[t]!);
       // 감시자(id 최소)는 추격하지 않는다. 다른 경비가 수색에 들어가면 원인은 경보/소음이다.
@@ -609,7 +609,7 @@ describe('2패스 보증 — 경비 배열 순서가 결과를 바꾸지 않는�
   it('s.guards 를 뒤집어 굴려도 id 기준 상태 요약이 완전히 같다', () => {
     const live = mixedTape(600);
     const play = (reverse: boolean): { guards: string[]; outcome: string; alerts: number } => {
-      const sim = createWorld(LV_MIXED, [{ tape: Uint8Array.from(mixedTape(400)), corpse: false }]);
+      const sim = createWorld(LV_MIXED, [{ tape: Uint16Array.from(mixedTape(400)), corpse: false }]);
       if (reverse) sim.guards.reverse();
       for (let t = 0; t < live.length && sim.outcome === 'RUNNING'; t++) stepWorld(sim, live[t]!);
       return { guards: guardDigest(sim), outcome: sim.outcome, alerts: sim.alerts };

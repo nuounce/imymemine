@@ -30,7 +30,7 @@ import type {
   SlotIndex,
   TickEvents,
 } from '../sim/types';
-import { drawTopFigure, STRIDE_PX, TOP_BUILD, topPose } from './figure';
+import { drawTopFigure, STRIDE_PX, TOP_BUILD, topPose, topQuadReach } from './figure';
 import {
   A_CONE_CCTV,
   A_CONE_CHASE,
@@ -212,6 +212,10 @@ function guardShadowW(g: Guard): number {
 function guardDrawR(g: Guard): number {
   const u = guardFigU(g);
   const b = TOP_BUILD[g.kind];
+  // 네발 유형은 앞뒤(코~꼬리)가 실루엣의 최대 치수라, 사람 기준의 어깨·머리 계산이
+  // 통째로 틀린다. 치수는 `figure.ts` 가 한 번만 정한다 — 그리는 쪽과 피하는 쪽이
+  // 다른 수를 쓰면 라벨이 몸에 깔린다.
+  if (b.quad === true) return Math.max(guardSizePx(g) / 2, topQuadReach(u, b));
   /** 팔 원과 잉크 지터가 실루엣 밖으로 삐져나오는 여유. 기존 `FIG_R` 의 0.68 = 0.5 × 1.36. */
   const M = 1.36;
   const longR = u * 0.5 * b.shoulder;
@@ -2107,6 +2111,10 @@ function gaitLift(g: Gait | undefined): number {
  * 한 겹만 쓰면 진하면 스티커, 흐리면 안개가 된다. 빛이 천장에서 오므로 전체가
  * `SHADOW_DROP` 만큼 아래로 밀린다. 인물이 출발·정지에 기울어도 그림자는 **그 자리에
  * 남는다** — 그 어긋남이 곧 관성으로 읽힌다.
+ *
+ * `angle`/`elong` 은 네발짐승처럼 **길쭉한 몸**을 위한 것이다: 사람은 어느 방향을 봐도
+ * 바닥 면적이 거의 원이라 회전이 무의미하지만, 개는 몸이 진행 방향으로 길어서 그림자가
+ * 같이 돌지 않으면 몸과 그림자의 모양이 어긋나 붕 뜬다. 생략하면 예전 그림 그대로다.
  */
 function contactShadow(
   ctx: CanvasRenderingContext2D,
@@ -2114,13 +2122,23 @@ function contactShadow(
   cy: number,
   w: number,
   strength: number,
+  angle = 0,
+  elong = 1,
 ): void {
   const oy = cy + w * SHADOW_DROP;
   const soft = w * SHADOW_SOFT_R;
+  // 바닥면 → 화면의 세로 눌림. 코어 타원은 눌린 값(0.19)을 이미 들고 있으므로 같은
+  // 비율을 되뽑아 쓴다 — 기본값(angle 0, elong 1)에서 예전 그림과 한 픽셀도 다르지 않다.
+  const squash = SHADOW_CORE_RY / SHADOW_CORE_RX;
+
   ctx.save();
   ctx.translate(cx, oy);
   // 위에서 본 바닥은 세로로 눌려 보인다 — 그림자도 같이 눌러야 바닥에 누운 것처럼 보인다.
   ctx.scale(1, 0.5);
+  // 회전은 **눌리기 전** 바닥면에서 일어난다(변환은 안쪽부터 적용된다). 그래야 길쭉한
+  // 그림자가 어느 방향을 봐도 같은 모양으로 돌아간다.
+  ctx.rotate(angle);
+  ctx.scale(elong, 1);
   const gd = ctx.createRadialGradient(0, 0, w * 0.12, 0, 0, soft);
   gd.addColorStop(0, withAlpha(C_BG, A_SHADOW_SOFT * strength));
   gd.addColorStop(0.55, withAlpha(C_BG, A_SHADOW_SOFT * strength * 0.5));
@@ -2129,10 +2147,15 @@ function contactShadow(
   ctx.fillRect(-soft, -soft, soft * 2, soft * 2);
   ctx.restore();
 
+  ctx.save();
+  ctx.translate(cx, oy);
+  ctx.scale(1, squash);
+  ctx.rotate(angle);
   ctx.fillStyle = withAlpha(C_BG, A_SHADOW_CORE * strength);
   ctx.beginPath();
-  ctx.ellipse(cx, oy, w * SHADOW_CORE_RX, w * SHADOW_CORE_RY, 0, 0, TAU);
+  ctx.ellipse(0, 0, w * SHADOW_CORE_RX * elong, w * SHADOW_CORE_RX, 0, 0, TAU);
   ctx.fill();
+  ctx.restore();
 }
 
 /**
@@ -2471,6 +2494,10 @@ function drawGuards(
     const drawR = guardDrawR(g);
     const top = cy - drawR;
     const alarmFx = view.guardAlarmFx.get(g.id) ?? 0;
+    const gg = view.guardGaits.get(g.id);
+    const drawAng = gg?.drawAng ?? angleOf(g.facing);
+    /** 네발 유형은 그림자도 몸을 따라 길쭉하게 눕는다(30 : 13 = 몸통 28 : 14 와 같은 비). */
+    const quad = TOP_BUILD[g.kind].quad === true;
 
     if (g.state === 'CHASE') {
       const pulse = 0.3 + Math.sin(view.frame * 0.3) * 0.16;
@@ -2482,20 +2509,19 @@ function drawGuards(
     }
 
     floorTint(ctx, cx, cy, size * 0.9, C_GUARD, 0.26);
-    contactShadow(ctx, cx, cy, guardShadowW(g), 1);
+    contactShadow(ctx, cx, cy, guardShadowW(g), 1, quad ? drawAng : 0, quad ? 30 / 13 : 1);
     // 꺾쇠는 실루엣 밖에 놓는다. 고정 24px 로 두면 BRUTE(어깨 51)의 몸 **안쪽**에 찍혀
     // 방향 정보가 실루엣에 먹히고, WATCHER 는 삼각대 다리 위에 겹친다.
     facingPip(ctx, cx, cy, g.facing, '#ffb0a8', drawR + 5, 7);
 
     // 유형은 **형태로만** 갈린다(색은 상태가 쓴다). 몸 크기는 시뮬의 충돌 박스에서
     // 파생되므로 BRUTE 는 화면에서도 실제로 압도적이다 — 어깨 51px 대 SENTRY 28px.
-    const gg = view.guardGaits.get(g.id);
     drawTopFigure(
       ctx,
       cx,
       cy,
       guardFigU(g) * gaitLift(gg),
-      gg?.drawAng ?? angleOf(g.facing),
+      drawAng,
       topPose({
         phase: gg?.phase ?? 0,
         run: gg?.run ?? 0,

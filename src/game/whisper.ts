@@ -64,6 +64,10 @@ export const GLOBAL_LINES = {
   firstCommit: '...저게 나였어.',
   ghostOnPlate: '쟤는 계속 밟고 있어. 지금 가야 해.',
   core: '가져왔어. 이제 나가면 돼.',
+  // 아이템은 설명서를 띄우지 않고 손에 쥔 사람이 알아채는 걸로 한다.
+  flashPicked: '섬광탄이네. 한 발짜리. ...F.',
+  flashHold: '눈이 멀면 잠깐은 못 보겠지. 아껴야 해, 하나뿐이니까.',
+  flashUsed: '지금이야.',
   suspicious: '...봤나?',
   chase: '들켰어!',
   timeLow: '시간이 없어.',
@@ -356,6 +360,19 @@ function pickLine(s: Session, live: Body | null): Candidate | null {
 
   if (live !== null && live.carryingLoot) {
     out.push({ id: 'core', text: GLOBAL_LINES.core, urgent: false });
+  }
+
+  // 눈뽕: 주운 순간 한 번, 그 뒤 들고 있는 동안 한 번 더.
+  // 쓰는 법(F)은 첫 줄에서 흘리고 반복하지 않는다 — 두 번 말하면 설명서가 된다.
+  if (live !== null && live.hasFlash) {
+    out.push({ id: 'flashPicked', text: GLOBAL_LINES.flashPicked, urgent: false });
+    out.push({ id: 'flashHold', text: GLOBAL_LINES.flashHold, urgent: false });
+  }
+  // 경비가 어지러운 동안 = 방금 터뜨린 직후. 지나갈 창이라는 걸 알려 준다.
+  for (const g of sim.guards) {
+    if (g.dazed <= 0) continue;
+    out.push({ id: 'flashUsed', text: GLOBAL_LINES.flashUsed, urgent: true });
+    break;
   }
   if (s.ghosts.length >= MAX_AFTERIMAGES) {
     out.push({ id: 'noSelves', text: GLOBAL_LINES.noSelves, urgent: false });

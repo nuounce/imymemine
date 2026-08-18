@@ -45,7 +45,7 @@ export function tiles(n: number): number {
 export function tape(segs: Seg[]): Tape {
   let total = 0;
   for (const s of segs) total += s.ticks;
-  const out = new Uint8Array(total);
+  const out = new Uint16Array(total);
   let i = 0;
   for (const s of segs) {
     out.fill(s.mask, i, i + s.ticks);
@@ -159,5 +159,5 @@ export function driveWaypoints(
     stepWorld(sim, mask);
     out.push(mask);
   }
-  return { tape: Uint8Array.from(out), sim };
+  return { tape: Uint16Array.from(out), sim };
 }

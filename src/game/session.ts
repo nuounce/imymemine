@@ -147,6 +147,7 @@ function emptyEvents(): TickEvents {
     alerted: false,
     footstep: false,
     ghostSpotted: false,
+    flashFired: false,
   };
 }
 
@@ -254,7 +255,7 @@ function transitionCopy(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): s
  */
 export function commitLoop(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): void {
   if (s.phase !== 'PLAY') return;
-  const tape = Uint8Array.from(s.recording);
+  const tape = Uint16Array.from(s.recording);
   const corpse = reason === 'CAPTURED';
 
   if (s.overwriteSlot !== null) {

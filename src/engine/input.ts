@@ -8,6 +8,7 @@
  */
 import {
   IN_DOWN,
+  IN_FLASH,
   IN_INTERACT,
   IN_LEFT,
   IN_RIGHT,
@@ -52,6 +53,9 @@ const MASK_BY_CODE: Readonly<Record<string, number>> = {
   KeyD: IN_RIGHT,
   ArrowRight: IN_RIGHT,
   KeyE: IN_INTERACT,
+  // 눈뽕은 한 번 누르면 끝이다. world.ts 가 올라가는 엣지에서만 소비하므로
+  // 눌러도 연발되지 않는다 — 소지가 없으면 아무 일도 없다.
+  KeyF: IN_FLASH,
   ShiftLeft: IN_RUN,
   ShiftRight: IN_RUN,
 };

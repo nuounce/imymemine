@@ -1324,6 +1324,14 @@ function drawMicPanel(ctx: CanvasRenderingContext2D, mic: MicView): void {
 /**
  * 캘리브레이션 화면. 이 2초가 없으면 시끄러운 현장에서 절대 임계값에 걸려
  * 시작하자마자 레벨 3 으로 굳는다 — 그러면 플레이 자체가 불가능하다.
+ *
+ * 이어폰 안내가 여기 있는 이유는 분위기가 아니라 **기능**이다. LISTEN 은 마이크로
+ * 플레이어 소리를 듣는데, 게임이 스피커로 발소리·경보를 내면 그 소리가 마이크로
+ * 되돌아와 **게임이 스스로를 발각시킨다.** 안 껴도 플레이는 되게 하되(그 완충이
+ * 측정 2초 동안 함께 재생되는 게임 소리다), 이유는 한 줄로 분명히 말한다.
+ *
+ * EASY 에는 뜨지 않는다 — `main.ts` 의 `micView()` 가 LISTEN 에서만 `MicView` 를
+ * 넘기므로, 마이크를 쓰지 않는 모드에는 이 화면 자체가 존재하지 않는다.
  */
 export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): void {
   // 아래 화면(타이틀 로고 / 월드)이 비치면 글자가 겹쳐 읽히지 않는다. 완전히 덮는다.
@@ -1332,8 +1340,8 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
 
   const waiting = mic.phase === 'REQUEST';
 
-  const panelW = 560;
-  const panelH = 200;
+  const panelW = 620;
+  const panelH = 264;
   const px = (CANVAS_W - panelW) / 2;
   const py = (CANVAS_H - panelH) / 2;
   plate(ctx, px, py, panelW, panelH);
@@ -1342,22 +1350,44 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   frame(ctx, px, py, panelW, panelH, waiting ? C_LOOT : C_EDGE, 0.55, 2);
   rivets(ctx, px, py, panelW, panelH);
 
-  stencil(ctx, 'LISTEN MODE', CANVAS_W / 2, py + 30, 10, C_STENCIL_DIM, 'center');
+  stencil(ctx, 'LISTEN MODE', CANVAS_W / 2, py + 28, 10, C_STENCIL_DIM, 'center');
+
+  // ── 이어폰 안내판 ──
+  // 화면에서 가장 큰 글자다. 이 모드에서 제일 먼저 알아야 하는 사실이기 때문이다.
+  const bw = panelW - 56;
+  const bx = px + 28;
+  const by = py + 44;
+  const bh = 74;
+  ctx.fillStyle = C_PLATE_LO;
+  ctx.fillRect(bx, by, bw, bh);
+  hazard(ctx, bx, by, bw, 5);
+  frame(ctx, bx, by, bw, bh, C_LOOT, 0.7, 2);
+  stencilBig(ctx, '이어폰을 껴 주세요', CANVAS_W / 2, by + 40, 26, C_LOOT, C_PLATE_LO);
+  text(
+    ctx,
+    '스피커로 들으면 게임 소리를 게임이 듣습니다.',
+    CANVAS_W / 2,
+    by + 62,
+    12,
+    C_TEXT,
+    'center',
+  );
+
   stencilBig(
     ctx,
     waiting ? '마이크 권한을 허용해 주세요' : '조용히 해주세요 — 환경음 측정 중',
     CANVAS_W / 2,
-    py + 66,
-    22,
+    py + 150,
+    20,
     waiting ? C_LOOT : C_STENCIL,
     C_PLATE,
   );
 
   // 산업용 계기: 파인 홈 + 눈금 + 채움.
-  const w = panelW - 100;
+  const w = panelW - 120;
   const h = 12;
   const x = (CANVAS_W - w) / 2;
-  const y = py + 90;
+  const y = py + 168;
   ctx.fillStyle = C_PLATE_LO;
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = withAlpha(C_LAMP, 0.8);
@@ -1374,7 +1404,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
       ? '브라우저의 마이크 요청을 허용하면 시작합니다.'
       : '지금 이 방의 소음을 바닥값으로 잡습니다.',
     CANVAS_W / 2,
-    y + 34,
+    y + 30,
     11,
     C_TEXT,
     'center',
@@ -1383,9 +1413,9 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
     ctx,
     waiting
       ? '거부하거나 응답하지 않아도 EASY 모드로 계속 진행됩니다.'
-      : '임계값은 이 바닥값 대비 상대치입니다 — 시끄러운 현장에서도 플레이할 수 있게.',
+      : '이어폰이 없어도 플레이할 수 있습니다 — 지금 들리는 게임 소리를 바닥값에 함께 넣습니다.',
     CANVAS_W / 2,
-    y + 52,
+    y + 48,
     10,
     C_TEXT_DIM,
     'center',
@@ -1394,7 +1424,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
     ctx,
     '오디오는 저장하지도 전송하지도 않습니다. 테이프에 남는 것은 틱당 2비트의 음량 레벨뿐입니다.',
     CANVAS_W / 2,
-    y + 74,
+    y + 70,
     10,
     withAlpha(C_TEXT_DIM, 0.75),
     'center',

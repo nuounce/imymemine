@@ -10,14 +10,21 @@
 // ── 기본 ───────────────────────────────────────────────────────────────────
 
 /**
- * 틱당 입력 비트마스크 (constants.ts 의 IN_* 조합). 0..255
+ * 틱당 입력 비트마스크 (constants.ts 의 IN_* 조합). 0..511
  * - 비트 0~5: 이동 / 상호작용 / 달리기 (UP DOWN LEFT RIGHT INTERACT RUN)
  * - 비트 6~7: 마이크 레벨 0~3 (LISTEN 모드. EASY 에서는 항상 0)
+ * - 비트 8: 눈뽕 사용 (IN_FLASH)
  */
 export type InputMask = number;
 
-/** 녹화된 한 루프의 입력 열. 인덱스 = 틱. */
-export type Tape = Uint8Array;
+/**
+ * 녹화된 한 루프의 입력 열. 인덱스 = 틱.
+ *
+ * 바이트가 아니라 **16비트**다 — 비트 0~7 이 이동·상호작용·마이크로 꽉 차서
+ * 눈뽕(비트 8)을 실을 자리가 없었기 때문이다. 기존 비트 배치는 그대로이므로
+ * 손으로 계산한 정답 테이프의 값은 한 개도 바뀌지 않는다.
+ */
+export type Tape = Uint16Array;
 
 /** 0 = I(조작 중), 1 = MY, 2 = ME, 3 = MINE */
 export type SlotIndex = 0 | 1 | 2 | 3;
@@ -28,6 +35,26 @@ export interface Vec2 {
 }
 
 // ── 엔티티 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 최근 궤적 = 냄새. 살아있는 몸이 `SCENT_INTERVAL` 틱마다 한 점씩 남기는 링버퍼다.
+ * HOUND 는 대상의 현재 위치가 아니라 이 점들을 **오래된 것부터** 되짚는다.
+ *
+ * 잔상도 궤적을 남긴다 — 그래서 잔상이 지나간 길이 개를 엉뚱한 곳으로 끌 수 있다.
+ * 이 아이템 같은 반격이 이 자료구조 하나에서 나온다.
+ */
+export interface Scent {
+  /** 링버퍼. 길이 = SCENT_LEN. 슬롯 = 인덱스 % SCENT_LEN. */
+  x: number[];
+  y: number[];
+  /**
+   * 그 점을 남긴 틱. **몸마다 기록 빈도가 다르므로**(제자리에 선 몸은 점을 안 남긴다)
+   * 인덱스는 시간이 아니다. 어느 냄새가 더 오래됐는지는 이 값으로만 비교한다.
+   */
+  t: number[];
+  /** 지금까지 기록한 총 점 개수. 유효 인덱스 = [max(0, count-SCENT_LEN), count-1]. */
+  count: number;
+}
 
 export interface Body {
   id: number;
@@ -47,6 +74,10 @@ export interface Body {
   spotted: boolean;
   lastInput: InputMask;
   noiseTimer: number;
+  /** 눈뽕을 하나 들고 있는가. **한 번에 하나만** 소지한다. */
+  hasFlash: boolean;
+  /** 이 몸이 남긴 최근 궤적. 살아있고 정지하지 않았을 때만 기록된다. */
+  scent: Scent;
   /** 이 몸이 소비하는 테이프. isLive 인 몸은 null (실시간 입력). */
   tape: Tape | null;
   /**
@@ -131,6 +162,26 @@ export interface Guard {
   chaseTimer: number;
   /** 경보 재발령 잠금 (WATCHER). 0 이어야 다시 울린다. */
   alarmCooldown: number;
+
+  // ── 눈뽕 (전 유형 공통) ──────────────────────────────────────────────────
+  /**
+   * 남은 어지러움 틱. > 0 이면 보지도, 듣지도, 움직이지도 못하고
+   * facing 만 고정 증분으로 돈다. WATCHER 도 이 동안은 경보를 못 울린다.
+   */
+  dazed: number;
+
+  // ── 냄새 추적 (tracksScent 유형 = HOUND) ─────────────────────────────────
+  /** 지금 되짚고 있는 궤적의 주인 Body id. -1 = 물고 있는 냄새 없음. */
+  scentBodyId: number;
+  /**
+   * 그 궤적에서 지금 향하는 점의 인덱스.
+   * -1 이면서 `scentBodyId >= 0` = 그 궤적을 끝까지 따라갔다 → 이제 직행한다.
+   */
+  scentIndex: number;
+  /** 현재 점에 매달린 잔여 틱. 0 이 되면 막힌 것으로 보고 다음 점으로 넘긴다. */
+  scentTimer: number;
+  /** 런지·좌우 흔들기의 위상. CHASE 진입 때 0 으로 리셋된다. */
+  lungePhase: number;
 }
 
 export interface Cctv {
@@ -263,6 +314,17 @@ export interface PowerBus {
   prevOn: boolean[];
 }
 
+/**
+ * 1회용 눈뽕. 바디가 겹치면 줍고(한 번에 하나), `IN_FLASH` 로 터뜨린다.
+ * 사용 자체가 테이프에 녹화되므로 잔상도 자기가 주웠던 것을 그대로 터뜨린다.
+ */
+export interface FlashPickup {
+  id: number;
+  x: number;
+  y: number;
+  taken: boolean;
+}
+
 export interface Loot {
   id: number;
   x: number;
@@ -324,6 +386,8 @@ export interface LevelDef {
   }[];
   /** 그룹 이름이 그대로 완성 채널 이름이 된다. */
   seqButtons?: { tx: number; ty: number; group: string; order: number }[];
+  /** 1회용 눈뽕이 놓인 타일. */
+  flashes?: { tx: number; ty: number }[];
   powerBuses?: { bus: string; channels: string[] }[];
   guards?: {
     path: { tx: number; ty: number }[];
@@ -373,6 +437,7 @@ export interface SimState {
   /** group 이름 오름차순 고정. 순회 순서 = 결정론. */
   seqGroups: SeqGroup[];
   powerBuses: PowerBus[];
+  flashes: FlashPickup[];
   loot: Loot;
   escape: EscapeZone;
 
@@ -397,4 +462,6 @@ export interface TickEvents {
   alerted: boolean;
   footstep: boolean;
   ghostSpotted: boolean;
+  /** 이번 틱에 누군가 눈뽕을 터뜨렸다 (렌더/오디오용. 잔상이 터뜨려도 true). */
+  flashFired: boolean;
 }

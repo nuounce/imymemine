@@ -43,7 +43,7 @@ function lcg(seed: number): () => number {
 
 /** 몇 틱씩 같은 입력을 유지하는, 사람 조작과 비슷한 모양의 무작위 테이프. */
 function randomTape(rnd: () => number, length: number): Tape {
-  const out = new Uint8Array(length);
+  const out = new Uint16Array(length);
   let mask = 0;
   let hold = 0;
   for (let i = 0; i < length; i++) {
@@ -108,7 +108,7 @@ describe('결정론: 같은 입력 테이프는 같은 최종 상태를 만든�
   it('입력이 한 틱만 달라져도 해시가 달라진다 (해시가 상태를 실제로 덮는지 확인)', () => {
     const level = STAGES[0]!;
     // 벽에 클램프되지 않는 짧은 하강. 한 틱을 빼면 정확히 512 서브픽셀 차이가 남는다.
-    const straight = new Uint8Array(40).fill(IN_DOWN);
+    const straight = new Uint16Array(40).fill(IN_DOWN);
     const skipped = straight.slice();
     skipped[10] = 0;
 

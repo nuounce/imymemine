@@ -982,6 +982,16 @@ export interface TopPose {
    * 위에서 본 사람이 서 있지 않다는 것을 그 배치 하나로 말한다(시체 전용).
    */
   sprawl?: number;
+  /**
+   * 참이면 사람이 아니라 **네발짐승**으로 그린다. 위 필드들의 뜻이 그대로 바뀐다 —
+   * `armL`/`armR` 은 앞다리, `footL`/`footR` 은 뒷다리, `shoulderScale` 은 몸통 **폭**,
+   * `girthScale` 은 폭 대비 **길이 비**다. 자세한 것은 `TopBuild.quad`.
+   */
+  quad?: boolean;
+  /** 꼬리 좌우 흔들림(-1..1). `quad` 전용. 정지하면 0 으로 잦아든다. */
+  tail?: number;
+  /** 갤럽 신축(-1..1, 양수 = 앞뒤로 늘어남). `quad` 전용. */
+  stretch?: number;
 }
 
 // ── 체형표 ─────────────────────────────────────────────────────────────────
@@ -1021,6 +1031,20 @@ export interface TopBuild {
   mount: number;
   /** 머리카락/후두부 덩어리 기본값. */
   hair: number;
+  /**
+   * 참이면 **네발짐승 작도법**으로 그린다(사람 작도법과 코드 경로가 아예 갈린다).
+   *
+   * 위에서 내려다볼 때 사람과 짐승을 가르는 것은 색도 크기도 아니고 **몸통 타원의
+   * 장축 방향** 하나다: 사람은 어깨가 진행 방향에 **수직**이고(장축 = θ+90°),
+   * 짐승은 몸이 진행 방향과 **평행**하다(장축 = θ). 그래서 이 플래그가 켜지면
+   * 아래 두 필드의 뜻도 함께 바뀐다 — 안 그러면 "어깨 폭"이라는 이름으로 몸 길이를
+   * 재게 되어 표를 읽는 사람이 반드시 틀린다:
+   *   `shoulder` → 몸통 **폭**(진행 방향에 수직) 배율
+   *   `girth`    → 폭 대비 **길이** 비(2 면 몸통이 폭의 두 배로 길다)
+   * `head` 는 그대로 머리 지름 배율(기준 13px), `headFwd` 는 쓰지 않는다 — 머리는
+   * 몸통 앞 끝에 붙는 것이 작도법에 박혀 있다.
+   */
+  quad?: boolean;
 }
 
 /**
@@ -1064,25 +1088,29 @@ export const TOP_BUILD: Record<
     mount: 0,
     hair: 0.28,
   },
-  // 사냥개. 어깨를 **좁히고**(0.92) 앞뒤를 **늘려**(1.80) 몸통 장축을 진행 방향으로
-  // 돌려눕힌다 — 위에서 보면 어깨판이 아니라 다트다. 거기에 상시 전경(0.40)과 크게
-  // 앞으로 뻗은 머리(2.4배)가 얹혀 정지해 있어도 달려들 자세로 읽힌다.
+  // 사냥개. **유일한 네발 유형**이다(`quad`). 사람 셋(SENTRY/BRUTE/WATCHER)은 전부
+  // 어깨가 진행 방향에 수직인데 이놈만 몸이 진행 방향과 나란해서, 실루엣만 봐도 —
+  // 색도 라벨도 없이 — 한눈에 갈린다. 다트형 사람으로 흉내내던 예전 값(girth 2.15,
+  // headFwd 3.8)은 어차피 "앞뒤로 두꺼운 사람"이 한계였다.
+  //
+  // 몸통 폭 14 × 길이 28(= 폭의 2배). 사람 기준(어깨 22 × 앞뒤 15)과 **장단이 반대**다.
   HOUND: {
-    shoulder: 0.86,
-    head: 0.98,
-    // 2.15 는 눈으로 맞춘 값이다. 1.8 에서는 타원이 거의 원이 되어 "작은 SENTRY"로만
-    // 읽혔다 — 앞뒤/좌우 비가 1.46 이 되어야 SENTRY 의 좌우/앞뒤 1.47 을 **뒤집은**
-    // 모양이 되고, 그제서야 어깨판이 아니라 다트로 보인다.
-    girth: 2.15,
-    // 머리가 몸통 앞 가장자리까지 나가야 실루엣이 앞으로 뾰족해진다. 2.4 에서는
-    // 두꺼워진 몸통 **안에** 파묻혀 코가 사라졌다.
-    headFwd: 3.8,
-    twistAmp: 0.15,
-    runTwist: 0.2,
+    quad: true,
+    // 몸통 **폭** 14px = u × (14/22). 사람의 "어깨 폭"과 같은 자리를 쓰지만 뜻이 다르다.
+    shoulder: 14 / 22,
+    // 폭 대비 **길이** 2배 → 몸통 28×14. 1.5 밑으로 내리면 다시 통통한 사람이 된다.
+    girth: 2,
+    // 머리 지름 11px(= 13 × 11/13). 몸통 폭 14 보다 **작아야** 몸 위에 얹힌 머리로 읽힌다.
+    head: 11 / 13,
+    // 네발 작도법은 머리를 몸통 앞 끝에 붙이므로 이 값을 쓰지 않는다(1 로 둔다).
+    headFwd: 1,
+    // 개는 사람처럼 상체가 비틀리지 않는다 — 대신 몸 전체가 좌우로 살짝 물결친다.
+    twistAmp: 0.1,
+    runTwist: 0.09,
     swing: 1.3,
-    leanRun: 0.2,
-    leanBias: 0.4,
-    legs: 0.85,
+    leanRun: 0.18,
+    leanBias: 0.28,
+    legs: 1,
     mount: 0,
     hair: 0.34,
   },
@@ -1155,7 +1183,7 @@ export function topPose(o: TopGaitOpts): TopPose {
   const twist = (b.twistAmp + run * b.runTwist) * m * s;
   const sw = b.swing;
 
-  return {
+  const p: TopPose = {
     shoulderTwist: twist,
     hipTwist: -twist * 0.6,
     // 좌우 진폭·바이어스가 다른 것은 체형과 무관한 **대칭 금지** 규칙이라 그대로 둔다.
@@ -1174,6 +1202,23 @@ export function topPose(o: TopGaitOpts): TopPose {
     legMass: b.legs,
     mount: b.mount,
   };
+
+  if (b.quad === true) {
+    p.quad = true;
+    // **트롯**(대각선 짝). 뒷다리의 부호만 뒤집으면 앞-좌(armL, +)와 뒤-우(footR, +)가
+    // 함께 나가고 그 반대짝이 뒤로 간다 — 네발짐승이 실제로 걷는 순서이고, 같은 쪽
+    // 앞뒤가 같이 나가면(패이스) 낙타가 되어 개로 안 보인다.
+    p.footL = -p.footL;
+    p.footR = -p.footR;
+    // 꼬리는 보폭의 **두 배** 주기로 흔든다. 다리와 같은 주기면 꼬리가 다리의 연장으로
+    // 읽히고, 그 순간 "뒤에 달린 별개의 것"이라는 신호가 사라진다.
+    // 0.12 는 멈춰 있을 때도 남는 휨 — 완전히 곧은 꼬리는 막대기다.
+    p.tail = Math.sin(o.phase * 2 + 0.7) * m * (0.55 + run * 0.45) + 0.12;
+    // 갤럽 신축. 다리가 모이는 순간 줄고 뻗는 순간 늘어난다 → 꼬리와 같은 2배 주기.
+    p.stretch = Math.cos(o.phase * 2) * m * (0.4 + run * 0.6);
+  }
+
+  return p;
 }
 
 export interface TopFigureOpts {
@@ -1273,6 +1318,54 @@ function lighten(hex: string, t: number): string {
   )})`;
 }
 
+/** 네발 유형의 치수. `u = 22` 에서 아래 주석의 px 값이 그대로 나온다. */
+interface QuadDims {
+  /** 몸통 짧은 축(좌우) 반경 → 폭 14. */
+  halfW: number;
+  /** 몸통 긴 축(**진행 방향**) 반경 → 길이 28. 사람과 90° 다른 축이 이것이다. */
+  halfL: number;
+  /** 머리 반지름 → 지름 11. */
+  headR: number;
+  /**
+   * 머리 중심의 전방 거리 → 13.5. 몸통 앞 끝(14)보다 **안쪽**이라 머리가 몸에 얹힌다.
+   * 앞으로 더 빼면(15) 머리가 몸에서 떨어져 나와 "몸통에 공을 붙인 것"으로 보인다 —
+   * 개는 목이 짧아서 위에서 보면 머리가 어깨 위에 파묻혀 있다.
+   */
+  headCx: number;
+  /** 주둥이가 머리 **가장자리 밖으로** 더 나가는 길이 → 6. */
+  muzzle: number;
+  /** 몸통 뒤 끝에서 꼬리 끝까지 → 12. */
+  tailLen: number;
+}
+
+/**
+ * 네발 치수를 한 곳에서만 정한다. 그리는 쪽(`paintTopDog`)과 피하는 쪽(렌더러의
+ * 라벨·꺾쇠 반경)이 같은 수를 써야 하므로, 둘 다 이 함수를 통과한다.
+ */
+export function quadDims(u: number, shoulder: number, girth: number, head: number): QuadDims {
+  const halfW = u * 0.5 * shoulder;
+  const halfL = halfW * girth;
+  return {
+    halfW,
+    halfL,
+    headR: u * (13 / 22) * 0.5 * head,
+    headCx: halfL - u * (0.5 / 22),
+    muzzle: u * (6 / 22),
+    tailLen: u * (12 / 22),
+  };
+}
+
+/**
+ * 네발 실루엣의 최대 반경(px) = 코 끝과 꼬리 끝 중 먼 쪽.
+ * 라벨·꺾쇠가 몸에 깔리지 않으려면 렌더러가 이 값을 알아야 한다.
+ */
+export function topQuadReach(u: number, b: TopBuild): number {
+  const d = quadDims(u, b.shoulder, b.girth, b.head);
+  // 마지막 항은 관성 쏠림(`bodyX`, 최대 0.06u)이 몸 전체를 앞으로 미는 양이다.
+  // 빼먹으면 출발 순간에만 라벨이 코에 닿는다 — 잡기 어려운 종류의 어긋남이라 여기서 더한다.
+  return Math.max(d.headCx + d.headR + d.muzzle, d.halfL + d.tailLen) + u * 0.06;
+}
+
 function paintTopFigure(
   g: CanvasRenderingContext2D,
   x: number,
@@ -1283,6 +1376,13 @@ function paintTopFigure(
   opts: TopFigureOpts,
   alpha: number,
 ): void {
+  // 네발은 작도법 자체가 다르다. 사람 코드에 분기를 심어 늘리면 두 그림 다 망가지므로
+  // 여기서 통째로 갈라진다 — 아래 사람 경로는 한 픽셀도 달라지지 않는다.
+  if (pose.quad === true) {
+    paintTopDog(g, x, y, size, angle, pose, opts, alpha);
+    return;
+  }
+
   const u = size;
   const seed = opts.inkSeed | 0;
   const bk = opts.bulk ?? 1;
@@ -1502,6 +1602,218 @@ function paintTopFigure(
   g.lineWidth = lw * 0.7;
   g.beginPath();
   g.ellipse(headR * 0.86, 0, headR * 0.3, headR * 0.24, 0, 0, TAU);
+  g.fill();
+  g.stroke();
+  g.restore();
+
+  g.restore();
+}
+
+// ── 탑다운 네발짐승 ─────────────────────────────────────────────────────────
+//
+// 위에서 내려다볼 때 **사람과 개를 가르는 결정적 차이는 몸의 방향**이다:
+//   사람 — 어깨가 진행 방향에 **수직**으로 넓다(몸통 장축 = θ+90°, 22 × 15)
+//   개   — 몸이 진행 방향과 **평행**하게 길다(몸통 장축 = θ, 28 × 14)
+// 이 90° 하나가 절반이고, 나머지 절반이 주둥이(앞)·꼬리(뒤)·귀다.
+//
+// 작도 순서(뒤에서 앞으로 겹쳐 그린다). `u = 22` 기준 px:
+//   ① 그림자(렌더러가 먼저 깐다. 긴 축이 θ) → ② 꼬리(길이 12, 이동 중 좌우로 흔들림)
+//   → ③ 뒷다리 2개(7×5, 몸 뒤쪽 양옆) → ④ 몸통 타원(**28 × 14, 장축 = θ**, 외곽선 1.5)
+//   → ⑤ 앞다리 2개(뒷다리와 반대 위상) → ⑥ 귀 2개(머리 뒤 양옆, 비대칭 삼각형)
+//   → ⑦ 주둥이(머리 밖으로 +6 인 좁은 쐐기) → ⑧ 머리 원(지름 11, 몸통보다 밝게)
+//   → ⑨ 코끝(가장 밝은 점 하나)
+//
+// 귀·주둥이를 머리 원 **앞에** 그리는 이유: 밑동이 머리에 덮여 실루엣 밖으로 나온
+// 부분만 남는다. 뒤에 그리면 머리 안쪽을 가로지르는 외곽선이 드러나 얼굴 무늬가 된다.
+
+/** -1..1 로 자른다. */
+function clampPM1(v: number): number {
+  return v < -1 ? -1 : v > 1 ? 1 : v;
+}
+
+function paintTopDog(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  pose: TopPose,
+  opts: TopFigureOpts,
+  alpha: number,
+): void {
+  const u = size;
+  const seed = opts.inkSeed | 0;
+  const bk = opts.bulk ?? 1;
+  // 사람 경로와 같은 이유로 굵기 배율은 절반만 먹인다 — 다리 네 개가 커지면
+  // 몸통보다 눈에 띄어 실루엣이 지네가 된다.
+  const lb = 1 + (bk - 1) * 0.5;
+  const d = quadDims(u, pose.shoulderScale ?? 1, pose.girthScale ?? 1, pose.headScale ?? 1);
+
+  const lean = clampPM1(pose.lean);
+  const stretch = clampPM1(pose.stretch ?? 0);
+  const wag = clampPM1(pose.tail ?? 0);
+  const legM = pose.legMass ?? 1;
+
+  /** 다리 타원: 진행 방향 7 × 좌우 5. 다리도 앞뒤로 길다. */
+  const legRx = u * (3.5 / 22) * lb * legM;
+  const legRy = u * (2.5 / 22) * lb * legM;
+  /** 다리가 앞뒤로 오가는 거리 ±3.4px. */
+  const stride = u * (3.4 / 22);
+  /** 외곽선 굵기 1.5px. 배경과 실루엣을 끊는 유일한 장치라 1px 밑으로 못 내려간다. */
+  const lw = Math.max(1, u * (1.5 / 22));
+
+  // 명도 위계는 사람과 같다(머리 > 몸통 > 꼬리 > 다리). 유형은 형태가 가르고
+  // 색은 상태(PATROL/SUSPICIOUS/CHASE)가 쓰므로, 여기서 건드리는 것은 밝기뿐이다.
+  const ink = opts.shade ?? darken(opts.color, 0.8);
+  const headFill = lighten(opts.color, 0.2);
+  const bodyFill = darken(opts.color, 0.28);
+  const legFill = darken(opts.color, 0.62);
+  const tailFill = darken(opts.color, 0.44);
+  const earFill = darken(opts.color, 0.5);
+
+  /** 진행 방향 쏠림(렌더 전용 관성). 그림자는 이걸 따라가지 않는다. */
+  const bodyX = lean * u * 0.06;
+  /**
+   * 갤럽 신축. 늘어난 만큼 납작해진다(부피 보존) — 길이만 늘리면 몸이 고무줄로 보인다.
+   * 정지하면 `stretch` 가 0 이라 신축도 멈춘다.
+   */
+  const sxL = 1 + stretch * 0.09;
+  const syW = 1 - stretch * 0.05;
+  const yaw = pose.shoulderTwist;
+  const hipYaw = pose.hipTwist;
+
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(x, y);
+  // 여기부터 **로컬 +x 가 개가 향한 방향(θ)** 이다. 아래 좌표는 전부 그 기준.
+  g.rotate(angle);
+  g.translate(bodyX, 0);
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  g.strokeStyle = ink;
+  g.lineWidth = lw;
+
+  /** 다리 한 짝. `along` 은 몸통 긴 축 위의 위치(-1..1), `sw` 는 걷기 위상. */
+  const paw = (sd: number, sw: number, along: number, rot: number): void => {
+    g.save();
+    g.rotate(rot);
+    g.translate(d.halfL * along * sxL + sw * stride, sd * d.halfW * 0.86 * syW);
+    // 발끝이 앞으로 나갈수록 바깥으로 살짝 돌아간다. 좌우가 같은 각이면 즉시 로봇이 된다.
+    g.rotate(sd * 0.14 + sw * 0.22);
+    g.beginPath();
+    g.ellipse(0, 0, legRx, legRy, 0, 0, TAU);
+    g.fill();
+    g.stroke();
+    g.restore();
+  };
+
+  // ── ② 꼬리 ──
+  // 위에서 볼 때 가장 강력한 "개" 신호다. 몸 뒤 끝에서 θ **반대**로 뻗고, 이동 중에는
+  // 좌우로 흔들린다(`pose.tail`). 두 마디로 끊어 중간을 휘게 한다 — 곧게 뻗으면 안테나다.
+  // 밑동은 몸통 안에서 시작해 ④ 가 덮으므로 이음매가 보이지 않는다.
+  g.fillStyle = tailFill;
+  const tailBase: V2 = [-d.halfL * 0.92 * sxL, 0];
+  const tailMid: V2 = [tailBase[0] - d.tailLen * 0.5, wag * d.tailLen * 0.26];
+  const tailTip: V2 = [
+    tailBase[0] - d.tailLen * 0.98,
+    wag * d.tailLen * 0.62 + d.tailLen * 0.06,
+  ];
+  g.save();
+  g.rotate(hipYaw);
+  bone(g, tailBase, tailMid, u * (3.4 / 22) * lb, u * (2.2 / 22) * lb, seed, 41);
+  bone(g, tailMid, tailTip, u * (2.2 / 22) * lb, u * (0.9 / 22) * lb, seed, 42);
+  g.restore();
+
+  // ── ③ 뒷다리 ──
+  // 몸통 뒤쪽 양옆. 대부분 몸통에 가려지고 바깥 끝만 삐져나온다 — 위에서 본 다리는
+  // 그게 전부다. 길게 그리는 순간 입면도가 된다.
+  if (legM > 0.02) {
+    g.fillStyle = legFill;
+    paw(-1, pose.footL, -0.52, hipYaw);
+    paw(1, pose.footR, -0.52, hipYaw);
+  }
+
+  // ── ④ 몸통 ──
+  // **긴 축이 θ(로컬 +x) 방향이다.** 사람 경로의 `ellipse(0, 0, torsoShortR, torsoLongR)`
+  // 와 반지름의 자리가 정확히 뒤바뀌어 있다 — 이 한 줄이 이 유형의 전부다.
+  g.save();
+  g.rotate(yaw);
+  g.fillStyle = bodyFill;
+  g.beginPath();
+  g.ellipse(0, 0, d.halfL * sxL, d.halfW * syW, 0, 0, TAU);
+  g.fill();
+  g.stroke();
+  g.restore();
+
+  // ── ⑤ 앞다리 ──
+  // 뒷다리와 **반대 위상**이다(`topPose` 가 뒷다리 부호를 뒤집는다). 같은 쪽 앞뒤가
+  // 함께 나가면 낙타 걸음이 되어 개로 안 보인다.
+  if (legM > 0.02) {
+    g.fillStyle = legFill;
+    paw(-1, pose.armL, 0.5, yaw);
+    paw(1, pose.armR, 0.5, yaw);
+  }
+
+  // ── ⑥⑦⑧⑨ 머리 ──
+  // 몸통 앞 끝에서 θ 방향으로 더 나간 자리(중심 15 = 몸통 앞 끝 14 + 1)라 4.5px 겹친다.
+  // 머리는 몸통의 요동을 **절반만** 따라간다 — 개는 몸보다 머리가 먼저 방향을 잡는다.
+  const hx = Math.cos(yaw) * d.headCx * sxL + lean * u * 0.03;
+  const hy = Math.sin(yaw) * d.headCx * sxL;
+  const hAng = yaw * 0.45;
+  const mz = d.headR + d.muzzle;
+
+  g.save();
+  g.translate(hx, hy);
+  g.rotate(hAng);
+
+  // ⑥ 귀. 밑동은 머리 **뒤쪽** 양옆(base)에 두고 꼭짓점은 거의 **옆**(tip)으로 벌린다.
+  // 밑동 각도 그대로 뒤로 뻗으면 꼭짓점이 몸통 타원 **안에** 떨어져 실루엣에서 사라진다 —
+  // 머리가 몸통 앞 끝에 얹혀 있어서 뒤쪽은 전부 몸이다. 그래서 뒤(밑동)와 옆(꼭짓점)을
+  // 따로 준다. 좌우는 각도·길이가 모두 달라 한 쌍이 같은 삼각형이 되지 않는다.
+  g.fillStyle = earFill;
+  const em = 0.85 + clamp01(pose.hairMass) * 0.5;
+  const ears: [number, number, number, number][] = [
+    [-2.42, -2.15, 1.72, 61],
+    [2.3, 2.24, 1.54, 62],
+  ];
+  for (const [base, tip, len, ix] of ears) {
+    const a = base + jit(seed, ix, 0.09);
+    const t = tip + jit(seed, ix + 8, 0.07);
+    g.beginPath();
+    g.moveTo(Math.cos(a - 0.62) * d.headR * 0.9, Math.sin(a - 0.62) * d.headR * 0.9);
+    g.lineTo(Math.cos(t) * d.headR * len * em, Math.sin(t) * d.headR * len * em);
+    g.lineTo(Math.cos(a + 0.62) * d.headR * 0.9, Math.sin(a + 0.62) * d.headR * 0.9);
+    g.closePath();
+    g.fill();
+    g.stroke();
+  }
+
+  // ⑦ 주둥이. 머리 가장자리 밖으로 6px 나가는 쐐기. **이것이 "앞"을 못 박는다** —
+  // 없으면 머리 원은 앞뒤가 똑같이 생겨서 개가 어느 쪽을 보는지 알 수 없다.
+  // 끝을 0.15R 까지 좁히면 바늘이 되어 주둥이가 아니라 부리로 읽힌다. 밑동 0.62R →
+  // 끝 0.3R 로 **덜** 좁혀야 코가 달린 뭉툭한 주둥이가 된다.
+  g.fillStyle = headFill;
+  g.beginPath();
+  g.moveTo(d.headR * 0.1, -d.headR * 0.62);
+  g.quadraticCurveTo(d.headR * 0.9, -d.headR * 0.46, mz, -d.headR * 0.3);
+  g.quadraticCurveTo(mz + d.headR * 0.22, 0, mz, d.headR * 0.3);
+  g.quadraticCurveTo(d.headR * 0.9, d.headR * 0.46, d.headR * 0.1, d.headR * 0.62);
+  g.closePath();
+  g.fill();
+  g.stroke();
+
+  // ⑧ 머리. 몸통보다 **밝다** — 그래야 몸 위에 얹힌 것으로 읽힌다. 귀·주둥이의 밑동은
+  // 이 원이 덮는다.
+  g.beginPath();
+  g.arc(0, 0, d.headR, 0, TAU);
+  g.fill();
+  g.stroke();
+
+  // ⑨ 코끝. 실루엣 밖에서 반짝이는 유일한 밝은 점이라, 축소해도 방향이 살아남는다.
+  g.fillStyle = opts.outline ?? lighten(opts.color, 0.5);
+  g.lineWidth = lw * 0.7;
+  g.beginPath();
+  g.ellipse(mz - d.headR * 0.16, 0, d.headR * 0.28, d.headR * 0.24, 0, 0, TAU);
   g.fill();
   g.stroke();
   g.restore();

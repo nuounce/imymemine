@@ -710,7 +710,7 @@ function legacyRun(
   every: number,
   ghostLen: number,
 ): number[] {
-  const ghost: Tape = Uint8Array.from(lcgMasks(777, ghostLen));
+  const ghost: Tape = Uint16Array.from(lcgMasks(777, ghostLen));
   const sim = createWorld(LV_LEGACY, [{ tape: ghost, corpse: true }]);
   const out: number[] = [];
   for (let t = 0; t < live.length; t++) {
@@ -733,12 +733,22 @@ function legacyRun(
  * → 416/576), 감지 감쇠(2 → 1), 대기 중 두리번거리기, INVESTIGATE 의 주변 훑기,
  * 그리고 `hashState` 가 새 경비 필드(kind·searchStep·chaseTimer 등)를 함께 섞는 것.
  * 이 배열은 여전히 "신규 장치가 기존 경로에 개입하지 않는다"는 회귀만 지킨다.
+ *
+ * 재기준선 (냄새 추적 HOUND + 눈뽕): 이번에는 **행동이 아니라 `hashState` 만** 바뀌었다.
+ * 이 레벨의 경비는 유형 미지정 = SENTRY 하나뿐이라 새 코드 경로(tracksScent·dazed)를
+ * 한 줄도 타지 않는다. 근거는 두 가지다:
+ *   ① 꼬리 두 칸(CAPTURED=1·알람 2 / 0·0)이 그대로다.
+ *   ② `hashState` 를 전혀 쓰지 않는 행동 디지스트(경비/바디/상자의 매 틱 좌표·상태·
+ *      타이머)를 이 시나리오 그대로 변경 전후로 돌려 **완전히 동일**함을 확인했다.
+ *      같은 도구에서 SENTRY/BRUTE/WATCHER 는 추격·체포가 걸리는 배치에서도 동일했고
+ *      HOUND 만 달라졌다 — 즉 이 배열이 움직인 이유는 해시가 궤적·눈뽕·dazed 를
+ *      새로 덮기 때문이지 기존 경로가 바뀌어서가 아니다.
  */
 const GOLDEN_SCRIPTED = [
-  315138417, 160578864, 2531716062, 1178798294, 3634994477, 2959121201, 1, 2,
+  2953203601, 2274205597, 2811272739, 3410525751, 169724092, 2281099580, 1, 2,
 ];
 const GOLDEN_RANDOM = [
-  538625989, 478887681, 1102011255, 1834267969, 1274354144, 3126952405, 0, 0,
+  3830199066, 2543638844, 106651318, 892514971, 763708128, 2713705673, 0, 0,
 ];
 
 describe('무영향 보증 — 장치를 쓰지 않는 레벨', () => {

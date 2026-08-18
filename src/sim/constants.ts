@@ -152,6 +152,55 @@ export const ALARM_COOLDOWN_TICKS = 120;
 export const CHASE_LEAD_TICKS = 12;
 export const CHASE_LEAD_MIN_DIST = 2 * TILE_SUB;
 
+// ── 냄새 추적 (HOUND) ──────────────────────────────────────────────────────
+/**
+ * 살아있는 몸은 `SCENT_INTERVAL` 틱마다 자기 중심 좌표를 링버퍼에 남긴다.
+ * `SCENT_LEN` 개를 유지하므로 기억되는 과거는 8 × 40 = **320틱**이다.
+ *
+ * 이 궤적은 몸에 붙어 있고 잔상도 예외가 아니다 — 그래서 잔상이 지나간 길이
+ * 그대로 개를 끄는 미끼가 된다. "지울 수 없는 부채"(SPEC §3-2)의 반대급부다.
+ */
+export const SCENT_INTERVAL = 8;
+export const SCENT_LEN = 40;
+/** 궤적점에 닿았다고 볼 여유 (서브픽셀). 좌우 흔들기 진폭보다 커야 한다. */
+export const SCENT_ARRIVE_EPS = 1024;
+/**
+ * 한 궤적점에 매달릴 수 있는 최대 틱. 벽 모서리에 걸려 영원히 한 점만
+ * 노리는 일이 없도록 강제로 다음 점으로 넘긴다.
+ */
+export const SCENT_STEP_TIMEOUT = 48;
+
+/**
+ * 런지(lunge). 추격 중 `LUNGE_PERIOD` 주기로 앞 `LUNGE_BURST` 틱은 빠르게,
+ * 남은 틱은 느리게. 확 치고 나갔다 잠깐 숨을 고르는 리듬이 나온다.
+ * 배수는 정수 분수(135/100, 60/100)로 고정한다 — 부동소수 금지.
+ */
+export const LUNGE_PERIOD = 48;
+export const LUNGE_BURST = 30;
+export const LUNGE_FAST_NUM = 135;
+export const LUNGE_SLOW_NUM = 60;
+export const LUNGE_DEN = 100;
+
+/** 진행 방향에 수직으로 흔드는 폭(서브픽셀)과 주기(틱). 주기는 4의 배수. */
+export const HOUND_WIGGLE_AMP = 768; // 3px
+export const HOUND_WIGGLE_PERIOD = 24;
+/** 냄새를 잃었을 때 좌우로 훑는 부채꼴 (facing 인덱스). 주기는 4의 배수. */
+export const HOUND_FAN_ARC = 14;
+export const HOUND_FAN_PERIOD = 64;
+/** HOUND 전용 회전 속도. `GUARD_TURN_RATE`(2) 보다 커서 고개를 빨리 돌린다. */
+export const HOUND_TURN_RATE = 6;
+
+// ── 눈뽕 (flash) ───────────────────────────────────────────────────────────
+/**
+ * 1회용 섬광탄. **테이프에 녹화되므로 잔상도 자기가 주웠던 것을 그대로 터뜨린다** —
+ * 과거의 내가 정확한 순간에 터뜨려 주고 지금의 내가 그 틈으로 지나가는 그림이
+ * 이 아이템의 존재 이유다.
+ */
+export const FLASH_RADIUS = 160 * SUBPIXEL;
+export const FLASH_TICKS = 150;
+/** dazed 동안 facing 이 매 틱 도는 **고정** 증분. 난수가 아니다. */
+export const DAZE_SPIN_STEP = 3;
+
 /** 유형별 고정 수치. 경비의 "성격"은 전부 이 표 한 곳에서 나온다. */
 export interface GuardKindSpec {
   /** 픽셀 단위 몸 크기 (렌더 참고용). */
@@ -178,6 +227,18 @@ export interface GuardKindSpec {
   canChase: boolean;
   /** true 면 게이지가 가득 찰 때 경보를 울린다 (WATCHER). */
   raisesAlarm: boolean;
+  /**
+   * **반응**할 때의 facing 회전 속도(인덱스/틱). HOUND 만 다르다.
+   * 평온한 순찰·복귀는 네 유형 모두 `GUARD_TURN_RATE` 로 돈다 — 이 값은
+   * "소리를 들었다 / 의심한다 / 물었다"에서만 쓰인다 (guard.ts).
+   */
+  turnRate: number;
+  /**
+   * true 면 대상의 **현재 위치로 직행하지 않고** 궤적(냄새)을 되짚는다.
+   * 소음을 들으면 지연 없이 그쪽을 보고, 잃으면 부채꼴로 훑는다 (HOUND).
+   * 이 파일 밖에 "HOUND 라면 …" 같은 유형 분기를 만들지 않기 위한 스위치다.
+   */
+  tracksScent: boolean;
 }
 
 function kindSpec(
@@ -192,6 +253,8 @@ function kindSpec(
   chasePersist: number,
   canChase: boolean,
   raisesAlarm: boolean,
+  turnRate: number = GUARD_TURN_RATE,
+  tracksScent = false,
 ): GuardKindSpec {
   return {
     size,
@@ -206,6 +269,8 @@ function kindSpec(
     chasePersist,
     canChase,
     raisesAlarm,
+    turnRate,
+    tracksScent,
   };
 }
 
@@ -220,9 +285,10 @@ function kindSpec(
  */
 export const GUARD_KINDS: Readonly<Record<GuardKind, GuardKindSpec>> =
   Object.freeze({
-    //        size  patrol  invest  chase  range  fovTan  gain  arc  persist  chase  alarm
+    //        size  patrol  invest  chase  range  fovTan  gain  arc  persist  chase  alarm  turn  scent
     SENTRY: kindSpec(26, 416, 480, 576, 224, 1192, 3, 8, 90, true, false),
-    HOUND: kindSpec(24, 480, 560, 704, 176, 700, 2, 6, 300, true, false),
+    // 유일하게 냄새를 쫓고 고개를 빨리 돌리는 유형. 나머지 셋은 기본값 그대로다.
+    HOUND: kindSpec(24, 480, 560, 704, 176, 700, 2, 6, 300, true, false, HOUND_TURN_RATE, true),
     BRUTE: kindSpec(40, 256, 288, 352, 192, 2144, 5, 11, 45, true, false),
     // 순찰 속도 0 = 제자리에 못박힌 감시자. 두리번거리기만 한다.
     WATCHER: kindSpec(28, 0, 0, 0, 320, 839, 6, 7, 0, false, true),
@@ -273,6 +339,12 @@ export const IN_LEFT = 4;
 export const IN_RIGHT = 8;
 export const IN_INTERACT = 16;
 export const IN_RUN = 32;
+/**
+ * 눈뽕 사용 (비트 8). 마이크가 비트 6~7 을 쓰고 있어 바이트가 꽉 찼으므로
+ * 테이프는 `Uint16Array` 다. **기존 비트 배치(1·2·4·8·16·32 + 마이크 6~7)는
+ * 한 비트도 움직이지 않았다** — 기존 정답 테이프의 의미는 그대로다.
+ */
+export const IN_FLASH = 256;
 
 // ── 마이크 (LISTEN 모드) ───────────────────────────────────────────────────
 /**

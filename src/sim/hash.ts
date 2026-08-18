@@ -6,6 +6,7 @@
  * 그래서 순회 순서를 전부 고정하고, 채널은 이름순으로 정렬해 섞는다.
  */
 
+import { SCENT_LEN } from './constants';
 import type { SimState } from './types';
 
 const FNV_OFFSET = 0x811c9dc5;
@@ -76,6 +77,17 @@ export function hashState(s: SimState): number {
     f.bool(b.spotted);
     f.int(b.lastInput);
     f.int(b.noiseTimer);
+    f.bool(b.hasFlash);
+    // 궤적(냄새)은 HOUND 의 행동을 가르는 **시뮬 상태**다. 해시가 덮지 않으면
+    // 궤적이 어긋나도 "결정론 통과"로 보인다. 링버퍼는 기록 순서대로 섞는다.
+    f.int(b.scent.count);
+    const oldest = b.scent.count > SCENT_LEN ? b.scent.count - SCENT_LEN : 0;
+    for (let k = oldest; k < b.scent.count; k++) {
+      const slot = k % SCENT_LEN;
+      f.int(b.scent.x[slot] ?? 0);
+      f.int(b.scent.y[slot] ?? 0);
+      f.int(b.scent.t[slot] ?? 0);
+    }
   }
 
   f.int(s.crates.length);
@@ -110,6 +122,12 @@ export function hashState(s: SimState): number {
     f.int(g.searchStep);
     f.int(g.chaseTimer);
     f.int(g.alarmCooldown);
+    // 눈뽕에 걸린 상태와 물고 있는 냄새도 상태다 — 빠지면 둘 다 해시 밖에서 움직인다.
+    f.int(g.dazed);
+    f.int(g.scentBodyId);
+    f.int(g.scentIndex);
+    f.int(g.scentTimer);
+    f.int(g.lungePhase);
   }
 
   f.int(s.cctvs.length);
@@ -144,6 +162,12 @@ export function hashState(s: SimState): number {
   for (const g of s.gates) {
     f.int(g.id);
     f.bool(g.open);
+  }
+
+  f.int(s.flashes.length);
+  for (const fl of s.flashes) {
+    f.int(fl.id);
+    f.bool(fl.taken);
   }
 
   f.int(s.loot.x);
