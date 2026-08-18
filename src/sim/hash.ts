@@ -99,6 +99,17 @@ export function hashState(s: SimState): number {
     f.int(g.targetY);
     f.int(g.targetBodyId);
     f.int(g.stateTimer);
+    // 유형과 새 AI 상태도 해시가 덮어야 한다 — 안 그러면 수색 단계나 추격 잔여가
+    // 어긋나도 "결정론 통과"로 보인다.
+    f.str(g.kind);
+    f.int(g.sizeSub);
+    f.int(g.sweepBase);
+    f.int(g.sweepPhase);
+    f.int(g.anchorX);
+    f.int(g.anchorY);
+    f.int(g.searchStep);
+    f.int(g.chaseTimer);
+    f.int(g.alarmCooldown);
   }
 
   f.int(s.cctvs.length);

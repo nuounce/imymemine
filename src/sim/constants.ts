@@ -6,6 +6,8 @@
  * 이 파일 밖에서 매직넘버를 쓰지 말 것.
  */
 
+import type { GuardKind } from './types';
+
 // ── 시간 ───────────────────────────────────────────────────────────────────
 export const TICK_HZ = 60;
 export const TICK_MS = 1000 / TICK_HZ;
@@ -23,6 +25,7 @@ export const BODY_SIZE = 24;
 export const BODY_SUB = BODY_SIZE * SUBPIXEL; // 6144
 export const CRATE_SIZE = 32;
 export const CRATE_SUB = CRATE_SIZE * SUBPIXEL; // 8192
+/** SENTRY 의 몸 크기. 유형별 크기는 `GUARD_KINDS` 를 보라 (렌더 기본값이기도 하다). */
 export const GUARD_SIZE = 26;
 export const GUARD_SUB = GUARD_SIZE * SUBPIXEL;
 
@@ -93,9 +96,10 @@ export const DIR_COS: readonly number[] = buildDirTable(Math.cos);
 export const DIR_SIN: readonly number[] = buildDirTable(Math.sin);
 
 // ── 경비 ───────────────────────────────────────────────────────────────────
-export const GUARD_PATROL_SPEED = 384;
-export const GUARD_INVESTIGATE_SPEED = 448;
-export const GUARD_CHASE_SPEED = 512;
+/** SENTRY 기준 속도. 유형별 값은 `GUARD_KINDS`. */
+export const GUARD_PATROL_SPEED = 416;
+export const GUARD_INVESTIGATE_SPEED = 480;
+export const GUARD_CHASE_SPEED = 576;
 export const GUARD_VIEW_RANGE = 224 * SUBPIXEL; // 7 타일
 /**
  * 시야 반각 50°의 탄젠트를 1000배 정수로 고정.
@@ -108,11 +112,142 @@ export const CCTV_FOV_TAN = 700; // tan(35°) ≈ 0.7002
 
 export const DETECT_MAX = 100;
 export const DETECT_GAIN = 3;
-export const DETECT_GAIN_RUN = 6;
-export const DETECT_DECAY = 2;
+/** 달리는 대상은 이득이 배가 된다. 유형별 기본 이득에 곱한다. */
+export const DETECT_RUN_MULT = 2;
+/**
+ * 시야에서 벗어났을 때의 감쇠. 2 → 1.
+ * 2 였을 때는 벽 뒤에 50틱만 숨으면 게이지가 완전히 리셋됐다 — 즉 "기억"이 없었다.
+ * 1 이면 가득 찬 게이지가 식는 데 100틱(약 1.7초 × ...)이 걸려, 한 번 들킨 사실이
+ * 잠깐 숨는 것으로 지워지지 않는다.
+ */
+export const DETECT_DECAY = 1;
 export const DETECT_SUSPICIOUS = 40;
-export const INVESTIGATE_TICKS = 120;
+/**
+ * 근접 가중 (SPEC §5.3 확장). 거리가 가까울수록 더 빨리 들킨다.
+ * 판정은 **제곱거리 정수 비교**뿐이다 — sqrt 도 나눗셈 결과의 소수도 쓰지 않는다.
+ * 시야 거리의 1/3 이내면 +2, 2/3 이내면 +1.
+ */
+export const DETECT_NEAR_BONUS = 2;
+export const DETECT_MID_BONUS = 1;
+/**
+ * INVESTIGATE 총예산. 120 → 180.
+ * 이제 이 예산은 "이동 + 주변 훑기" 전체를 덮으며 매 틱 소모된다(guard.ts).
+ * 예전처럼 도착 후에만 줄어들면 먼 소음을 향해 영원히 걸어갈 수 있었다.
+ */
+export const INVESTIGATE_TICKS = 180;
 export const GUARD_TURN_RATE = 2; // facing 인덱스 / 틱
+
+/**
+ * 경보 전파 반경. CHASE 에 진입한 경비와 경보를 울린 WATCHER 가
+ * 이 반경 안의 다른 경비를 그 지점으로 INVESTIGATE 시킨다.
+ * 경비끼리 소통이 없으면 한 명만 따돌리면 끝나는 게임이 된다.
+ */
+export const ALERT_RADIUS = 224 * SUBPIXEL;
+/** WATCHER 가 같은 경보를 연타하지 않도록 하는 잠금. */
+export const ALARM_COOLDOWN_TICKS = 120;
+/**
+ * 예측 추격(lead pursuit). 대상의 **마지막 이동 방향**으로 이만큼 앞을 노린다.
+ * 대상이 가까우면(아래 값 이내) 예측을 끄고 몸 자체를 노린다 — 코앞에서 헛짚지 않게.
+ */
+export const CHASE_LEAD_TICKS = 12;
+export const CHASE_LEAD_MIN_DIST = 2 * TILE_SUB;
+
+/** 유형별 고정 수치. 경비의 "성격"은 전부 이 표 한 곳에서 나온다. */
+export interface GuardKindSpec {
+  /** 픽셀 단위 몸 크기 (렌더 참고용). */
+  size: number;
+  /** 서브픽셀 충돌 박스 한 변. */
+  sizeSub: number;
+  patrolSpeed: number;
+  investigateSpeed: number;
+  chaseSpeed: number;
+  viewRange: number;
+  fovTan: number;
+  detectGain: number;
+  /**
+   * 순찰 대기 중 좌우로 흔드는 폭(facing 인덱스). **반드시 자기 시야 반각 이하여야 한다.**
+   * 넘으면 스윕 극단에서 지정 방향이 원뿔 밖으로 나가, 경비가 자기가 지키라고
+   * 지시받은 쪽을 주기적으로 못 보게 된다 — 감시를 넓히려던 기능이 사각을 만든다.
+   * (64스텝 = 360° 이므로 1스텝 = 5.625°. 반각: SENTRY 50°=8.89 / HOUND 35°=6.22
+   *  / BRUTE 65°=11.56 / WATCHER 40°=7.11 스텝.)
+   */
+  sweepArc: number;
+  /** CHASE 진입 후 대상을 못 본 채 버티는 틱 수. */
+  chasePersist: number;
+  /** false 면 CHASE 에 들어가지 않는다 = 체포하지 않는다 (WATCHER). */
+  canChase: boolean;
+  /** true 면 게이지가 가득 찰 때 경보를 울린다 (WATCHER). */
+  raisesAlarm: boolean;
+}
+
+function kindSpec(
+  size: number,
+  patrolSpeed: number,
+  investigateSpeed: number,
+  chaseSpeed: number,
+  viewRangePx: number,
+  fovTan: number,
+  detectGain: number,
+  sweepArc: number,
+  chasePersist: number,
+  canChase: boolean,
+  raisesAlarm: boolean,
+): GuardKindSpec {
+  return {
+    size,
+    sizeSub: size * SUBPIXEL,
+    patrolSpeed,
+    investigateSpeed,
+    chaseSpeed,
+    viewRange: viewRangePx * SUBPIXEL,
+    fovTan,
+    detectGain,
+    sweepArc,
+    chasePersist,
+    canChase,
+    raisesAlarm,
+  };
+}
+
+/**
+ * 네 유형의 전부. 표를 읽으면 각자가 무엇으로 위협하는지 그대로 보인다.
+ *
+ * BRUTE 의 `size: 40` 에는 특수 규칙이 붙어 있지 않다. 40px 박스는 32px 통로에
+ * 들어가지 않으므로 `sweepAxis` 가 통로 입구에서 클램프한다 — 좁은 길이 피난처가
+ * 되는 건 AI 예외가 아니라 **충돌 판정의 결과**다.
+ * (그래서 BRUTE 는 3타일 이상 열린 곳에 배치해야 한다. 1타일 통로에 스폰하면
+ *  처음부터 벽에 낀 상태가 되고, 낀 몸은 탈출을 위해 이동이 허용된다 — physics.ts)
+ */
+export const GUARD_KINDS: Readonly<Record<GuardKind, GuardKindSpec>> =
+  Object.freeze({
+    //        size  patrol  invest  chase  range  fovTan  gain  arc  persist  chase  alarm
+    SENTRY: kindSpec(26, 416, 480, 576, 224, 1192, 3, 8, 90, true, false),
+    HOUND: kindSpec(24, 480, 560, 704, 176, 700, 2, 6, 300, true, false),
+    BRUTE: kindSpec(40, 256, 288, 352, 192, 2144, 5, 11, 45, true, false),
+    // 순찰 속도 0 = 제자리에 못박힌 감시자. 두리번거리기만 한다.
+    WATCHER: kindSpec(28, 0, 0, 0, 320, 839, 6, 7, 0, false, true),
+  });
+
+// ── 두리번거리기 / 수색 ────────────────────────────────────────────────────
+/**
+ * SENTRY 의 스윕 폭(facing 인덱스). 유형별 값은 `GUARD_KINDS.sweepArc` 다.
+ * ±8 ≈ ±45° 라 유효 감시각이 시야 반각 + 45° 로 넓어진다 — "정면만 피하면 된다"가 사라지되,
+ * 반각 50° 안에 머무르므로 **지정 방향은 한 틱도 놓치지 않는다**.
+ */
+export const GUARD_SWEEP_ARC = 8;
+/** 한 왕복(0 → +arc → 0 → -arc → 0)에 걸리는 틱. 4로 나누어떨어져야 한다. */
+export const GUARD_SWEEP_PERIOD = 96;
+
+/**
+ * INVESTIGATE 가 기준점에 도착한 뒤 순서대로 훑는 오프셋. **고정 배열**이다 —
+ * 난수를 쓰면 결정론이 무너진다. 도착해서 가만히 서 있던 예전 동작이
+ * "수색"이 아니라 "구경"이었던 문제를 이것이 고친다.
+ */
+export const SEARCH_OFFSETS: readonly { x: number; y: number }[] = Object.freeze([
+  { x: TILE_SUB, y: 0 },
+  { x: 0, y: TILE_SUB },
+  { x: -TILE_SUB, y: 0 },
+]);
 
 // ── CCTV ───────────────────────────────────────────────────────────────────
 export const CCTV_RANGE = 192 * SUBPIXEL;

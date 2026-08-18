@@ -953,13 +953,30 @@ export interface TopPose {
   footR: number;
   /** 머리 덩어리 0..1. 클수록 뒤통수가 무거워진다. */
   hairMass: number;
-  /** 몸통 타원 배율(기본 1). 간수는 `TOP_WARDEN_SHOULDER`. */
+  /** 몸통 긴 축(어깨) 배율(기본 1). 체형표는 `TOP_BUILD`. */
   shoulderScale?: number;
   /**
    * 머리 지름 배율(기본 1). 몸통과 **따로** 두는 이유: 머리가 몸통에 비례해 커지면
-   * 큰 사람이 아니라 가까이 있는 사람이 된다. 간수는 몸통 1.27배에 머리 1.08배다.
+   * 큰 사람이 아니라 가까이 있는 사람이 된다. SENTRY 는 몸통 1.27배에 머리 1.08배다.
    */
   headScale?: number;
+  /**
+   * 몸통 **짧은 축**(앞뒤 두께) 배율(기본 1). 긴 축과 따로 두는 것이 탑다운에서
+   * 체형을 가르는 가장 큰 손잡이다: 이 값이 1 을 크게 넘으면 몸통 타원의 장축이
+   * **진행 방향으로 돌아누워** 다트(빠른 인상)가 되고, 1 밑으로 내리면 진행 방향에
+   * 수직인 납작한 판(벽 같은 인상)이 된다.
+   */
+  girthScale?: number;
+  /** 머리가 앞으로 나가는 거리 배율(기본 1). 크면 목이 뻗은 인상, 작으면 어깨에 파묻힌 인상. */
+  headFwdScale?: number;
+  /** 다리 타원 크기 배율(기본 1). 0.02 이하면 다리를 아예 그리지 않는다. */
+  legMass?: number;
+  /**
+   * 거치대(삼각대) 강도 0..1. 0 초과면 다리 대신 몸통 밑에 **세 갈래 지지대**를 깐다.
+   * 걷는 다리가 사라지고 고정 구조물이 남으므로, 멀리서도 "저건 이동하지 않는다"가
+   * 실루엣만으로 읽힌다.
+   */
+  mount?: number;
   /**
    * 널브러진 정도 0..1. 1 이면 머리 원이 몸통 타원 **옆으로** 빠지고 다리가 벌어진다 —
    * 위에서 본 사람이 서 있지 않다는 것을 그 배치 하나로 말한다(시체 전용).
@@ -967,13 +984,147 @@ export interface TopPose {
   sprawl?: number;
 }
 
+// ── 체형표 ─────────────────────────────────────────────────────────────────
+//
+// **유형 구분은 형태로만 한다.** 색은 상태(PATROL/SUSPICIOUS/CHASE)가 이미 쓰고 있어서,
+// 유형까지 색으로 나누면 "지금 위험한가"라는 더 급한 정보가 뭉개진다. 그래서 아래 표는
+// 전부 **치수**다 — 어깨 폭, 앞뒤 두께, 기울기, 다리 유무.
+//
+// 탑다운에서 한눈에 갈리는 축은 두 개뿐이다:
+//   ① 몸통 타원의 **장축이 어디를 향하는가** (옆 = 어깨형 / 앞 = 다트형)
+//   ② 그 타원이 **얼마나 큰가**
+// 그래서 `shoulder`(옆)와 `girth`(앞뒤)를 따로 두고, 유형마다 둘의 대소를 뒤집는다.
+
+/** 한 유형의 체형 상수. 전부 기준 단위 `size` 에 곱해지는 배율이거나 진폭이다. */
+export interface TopBuild {
+  /** 몸통 긴 축(어깨, 진행 방향에 **수직**) 배율. */
+  shoulder: number;
+  /** 머리 지름 배율. */
+  head: number;
+  /** 몸통 짧은 축(앞뒤 두께) 배율. `shoulder` 를 넘어서면 장축이 진행 방향으로 돌아눕는다. */
+  girth: number;
+  /** 머리 전방 오프셋 배율. */
+  headFwd: number;
+  /** 걷기 상체 회전 진폭(rad). 크면 경쾌하고 작으면 육중하다. */
+  twistAmp: number;
+  /** 달릴 때 상체 회전에 더해지는 진폭(rad). */
+  runTwist: number;
+  /** 팔·발 스윙 진폭 배율. */
+  swing: number;
+  /** 이동 중 전경(前傾) 계수. `motion` 에 비례해 걸린다. */
+  leanRun: number;
+  /** **상시** 전경. 서 있어도 기울어 있는 정도 — 정지 중에도 "빠른 놈"으로 읽히게 한다. */
+  leanBias: number;
+  /** 다리 크기 배율. */
+  legs: number;
+  /** 거치대 강도 0..1. 0 초과면 다리 대신 세 갈래 지지대를 그린다. */
+  mount: number;
+  /** 머리카락/후두부 덩어리 기본값. */
+  hair: number;
+}
+
 /**
- * 간수 몸통 배율. `FIG_W`(22) 에 곱하면 몸통 긴 축이 28px 이 된다.
- * 렌더러가 그림자·라벨 반경을 같은 값으로 맞출 수 있게 밖으로 낸다.
+ * 유형별 체형. 키는 렌더 전용 문자열이며 시뮬 타입을 import 하지 않는다 —
+ * 이 파일은 그리는 법만 알고 게임 규칙은 모른다. 매핑은 렌더러가 한다.
+ *
+ * `SENTRY` 는 **기준선이라 예전 간수 값(어깨 1.27 / 머리 1.08 / 회전 0.13)과 정확히
+ * 같다.** 여기를 건드리면 "SENTRY 는 현재 모습 유지"라는 전제가 깨진다.
  */
-export const TOP_WARDEN_SHOULDER = 1.27;
-/** 간수 머리 배율. 지름 13 → 14px. 몸통(1.27)보다 훨씬 덜 커진다. */
-const TOP_WARDEN_HEAD = 1.08;
+export const TOP_BUILD: Record<
+  'PLAYER' | 'SENTRY' | 'HOUND' | 'BRUTE' | 'WATCHER',
+  TopBuild
+> = {
+  // 플레이어·잔상. 기준 작도법 그대로(몸통 22×15, 머리 13).
+  PLAYER: {
+    shoulder: 1,
+    head: 1,
+    girth: 1,
+    headFwd: 1,
+    twistAmp: 0.17,
+    runTwist: 0.16,
+    swing: 1,
+    leanRun: 0.12,
+    leanBias: 0,
+    legs: 1,
+    mount: 0,
+    hair: 0.6,
+  },
+  // 기준 경비. 어깨가 넓고 상체가 덜 흔들린다.
+  SENTRY: {
+    shoulder: 1.27,
+    head: 1.08,
+    girth: 1,
+    headFwd: 1,
+    twistAmp: 0.13,
+    runTwist: 0,
+    swing: 1,
+    leanRun: 0.06,
+    leanBias: 0,
+    legs: 1,
+    mount: 0,
+    hair: 0.28,
+  },
+  // 사냥개. 어깨를 **좁히고**(0.92) 앞뒤를 **늘려**(1.80) 몸통 장축을 진행 방향으로
+  // 돌려눕힌다 — 위에서 보면 어깨판이 아니라 다트다. 거기에 상시 전경(0.40)과 크게
+  // 앞으로 뻗은 머리(2.4배)가 얹혀 정지해 있어도 달려들 자세로 읽힌다.
+  HOUND: {
+    shoulder: 0.86,
+    head: 0.98,
+    // 2.15 는 눈으로 맞춘 값이다. 1.8 에서는 타원이 거의 원이 되어 "작은 SENTRY"로만
+    // 읽혔다 — 앞뒤/좌우 비가 1.46 이 되어야 SENTRY 의 좌우/앞뒤 1.47 을 **뒤집은**
+    // 모양이 되고, 그제서야 어깨판이 아니라 다트로 보인다.
+    girth: 2.15,
+    // 머리가 몸통 앞 가장자리까지 나가야 실루엣이 앞으로 뾰족해진다. 2.4 에서는
+    // 두꺼워진 몸통 **안에** 파묻혀 코가 사라졌다.
+    headFwd: 3.8,
+    twistAmp: 0.15,
+    runTwist: 0.2,
+    swing: 1.3,
+    leanRun: 0.2,
+    leanBias: 0.4,
+    legs: 0.85,
+    mount: 0,
+    hair: 0.34,
+  },
+  // 중장비. 어깨 1.52 에 앞뒤는 오히려 **줄여**(0.86) 진행 방향에 수직인 납작한 판을
+  // 만든다. 폭은 압도적인데 두께는 얇아서, "옆으로는 못 지나가지만 좁은 길엔 못 들어온다"가
+  // 실루엣 하나로 읽힌다. 회전(0.06)과 스윙(0.7)을 죽여 무겁게 걷는다.
+  BRUTE: {
+    shoulder: 1.52,
+    head: 1.02,
+    girth: 0.86,
+    headFwd: 0.55,
+    twistAmp: 0.06,
+    runTwist: 0,
+    swing: 0.7,
+    leanRun: 0.04,
+    leanBias: 0,
+    legs: 1.15,
+    mount: 0,
+    hair: 0.22,
+  },
+  // 감시탑. **다리를 지우고 삼각 거치대를 깐다** — 걷는 다리가 없다는 것이 이 유형의
+  // 정보 전부다(이 자리에서 움직이지 않는다). 대신 머리(센서)를 키워 시선을 그리로 보낸다.
+  WATCHER: {
+    shoulder: 1.05,
+    head: 1.16,
+    girth: 0.95,
+    headFwd: 1.15,
+    twistAmp: 0.015,
+    runTwist: 0,
+    swing: 0.14,
+    leanRun: 0.02,
+    leanBias: 0,
+    // 다리를 **0 으로 지운다.** 작게 남기면 거치대와 겹쳐 실루엣이 지저분해지고,
+    // "안 움직인다"는 정보가 절반만 전달된다.
+    legs: 0,
+    mount: 1,
+    hair: 0.2,
+  },
+};
+
+/** `TOP_BUILD` 의 키. */
+export type TopBuildName = keyof typeof TOP_BUILD;
 
 export interface TopGaitOpts {
   /** 이동 거리로 누적된 위상(라디안). `STRIDE_PX` 마다 π 씩 자란다. */
@@ -985,8 +1136,8 @@ export interface TopGaitOpts {
   /** 가감속 쏠림(-1..1). 렌더러가 `motion` 의 지연 사본과의 차이로 만든다. */
   lean: number;
   hairMass?: number;
-  /** 간수 체형: 어깨가 넓고 몸통 회전이 적다(무겁게 걷는다). */
-  warden?: boolean;
+  /** 체형(기본 `PLAYER`). */
+  build?: TopBuildName;
 }
 
 /**
@@ -996,25 +1147,32 @@ export interface TopGaitOpts {
  * 좌우가 같은 값이 되지 않는다** — 모듈 서두의 대칭 금지 조건은 탑다운에서도 그대로다.
  */
 export function topPose(o: TopGaitOpts): TopPose {
-  const warden = o.warden === true;
+  const b = TOP_BUILD[o.build ?? 'PLAYER'];
   const m = clamp01(o.motion);
   const run = clamp01(o.run);
   const s = Math.sin(o.phase);
-  // 간수는 덩치가 커서 상체가 덜 흔들린다. 플레이어는 달릴수록 어깨가 크게 돈다.
-  const twist = (warden ? 0.13 : 0.17 + run * 0.16) * m * s;
+  // 덩치가 클수록 상체가 덜 흔들린다(BRUTE 0.06). 가벼운 쪽은 달릴수록 크게 돈다.
+  const twist = (b.twistAmp + run * b.runTwist) * m * s;
+  const sw = b.swing;
 
   return {
     shoulderTwist: twist,
     hipTwist: -twist * 0.6,
-    armL: (0.52 + run * 0.5) * m * s + 0.07,
-    armR: -(0.56 + run * 0.55) * m * s - 0.05,
-    // 가감속 쏠림 위에 **상시 전경**을 얹는다. 달리면 크게 기운다 — 걷기와의 두 번째 차이.
-    lean: o.lean + ((warden ? 0.06 : 0.12) + run * 0.26) * m,
-    footL: (0.55 + run * 0.45) * m * s,
-    footR: -(0.58 + run * 0.45) * m * s,
-    hairMass: o.hairMass ?? (warden ? 0.28 : 0.6),
-    shoulderScale: warden ? TOP_WARDEN_SHOULDER : 1,
-    headScale: warden ? TOP_WARDEN_HEAD : 1,
+    // 좌우 진폭·바이어스가 다른 것은 체형과 무관한 **대칭 금지** 규칙이라 그대로 둔다.
+    armL: (0.52 + run * 0.5) * m * s * sw + 0.07,
+    armR: -(0.56 + run * 0.55) * m * s * sw - 0.05,
+    // 가감속 쏠림 + 이동 중 전경 + **상시 전경**. 마지막 항만 `m` 이 안 걸려서,
+    // HOUND 는 멈춰 서 있어도 앞으로 기울어 있다.
+    lean: o.lean + (b.leanRun + run * 0.26 * sw) * m + b.leanBias,
+    footL: (0.55 + run * 0.45) * m * s * sw,
+    footR: -(0.58 + run * 0.45) * m * s * sw,
+    hairMass: o.hairMass ?? b.hair,
+    shoulderScale: b.shoulder,
+    headScale: b.head,
+    girthScale: b.girth,
+    headFwdScale: b.headFwd,
+    legMass: b.legs,
+    mount: b.mount,
   };
 }
 
@@ -1137,8 +1295,12 @@ function paintTopFigure(
   // 이 세 수의 대소 관계가 "사람"의 전부다. 굵기 배율(`bulk`)은 여기 걸리지 않는다.
   /** 몸통 긴 축 반지름 → 지름 22 (간수 28). 긴 축은 **옆**(θ+90°) 방향이다. */
   const torsoLongR = u * 0.5 * sc;
-  /** 몸통 짧은 축 반지름 → 지름 15 (간수 19). 짧은 축이 진행 방향이다. */
-  const torsoShortR = u * (15 / 22) * 0.5 * sc;
+  /**
+   * 몸통 짧은 축 반지름 → 지름 15 (SENTRY 19). 짧은 축이 진행 방향이다.
+   * `girthScale` 이 이 축만 늘리므로, 1.47(=22/15) 을 넘기는 순간 타원의 장축이
+   * 옆에서 **앞으로** 돌아눕는다 — HOUND(1.8)가 다트로 읽히는 원리가 이것 하나다.
+   */
+  const torsoShortR = u * (15 / 22) * 0.5 * sc * (pose.girthScale ?? 1);
   /** 머리 반지름 → 지름 13 (간수 14). 몸통 짧은 축보다 **작아야** 위계가 선다. */
   const headR = u * (13 / 22) * 0.5 * (pose.headScale ?? 1);
   // 굵기 배율은 **절반만** 먹인다. 팔 원이 커질수록 어깨 양 끝의 두 덩어리가 머리보다
@@ -1147,10 +1309,13 @@ function paintTopFigure(
   /** 팔 반지름 → 지름 7. */
   const armR = u * (7 / 22) * 0.5 * lb;
   /** 다리 타원: 앞뒤 9 × 좌우 6. */
-  const legRx = u * (9 / 22) * 0.5 * lb;
-  const legRy = u * (6 / 22) * 0.5 * lb;
+  const legM = pose.legMass ?? 1;
+  const legRx = u * (9 / 22) * 0.5 * lb * legM;
+  const legRy = u * (6 / 22) * 0.5 * lb * legM;
   /** 머리가 몸통 중심에서 앞(θ)으로 나가는 거리 = 3px. */
-  const headFwd = u * (3 / 22);
+  const headFwd = u * (3 / 22) * (pose.headFwdScale ?? 1);
+  /** 거치대 강도. 0 초과면 다리 대신 세 갈래 지지대를 깐다. */
+  const mount = clamp01(pose.mount ?? 0);
   /** 팔 앞뒤 스윙 진폭 = ±3px. */
   const swing = u * (3 / 22);
   /** 외곽선 굵기 = 1.5px. 배경과 실루엣을 끊는 유일한 장치라 1px 밑으로 못 내려간다. */
@@ -1189,28 +1354,71 @@ function paintTopFigure(
   g.strokeStyle = ink;
   g.lineWidth = lw;
 
+  // ── ②a 거치대(WATCHER 전용) ──
+  // 다리 대신 몸통 밑에 깔리는 **세 갈래 지지대**. 뒤로 하나, 앞 좌우로 둘 — 앞이
+  // 벌어져 있어 시선 방향이 지지대 배치로도 한 번 더 읽힌다. 걷기 위상을 전혀 쓰지
+  // 않으므로 이 다리는 **어느 프레임에서도 움직이지 않는다**: 그게 이 유형의 정보다.
+  if (mount > 0.01) {
+    // 2.2 배. 1.42 배로는 지지대가 몸통 타원 **밑에 깔려** 발 세 점만 떠 보였다 —
+    // 다리가 몸 밖으로 확실히 뻗어야 삼각대라는 구조로 읽힌다.
+    const legLen = torsoLongR * 2.2;
+    g.save();
+    // **회전을 되돌린다.** 삼각대는 월드에 고정이고 그 위의 상반신만 돌아간다 —
+    // 다리까지 같이 돌면 "제자리에서 두리번거리는 기둥"이 아니라 "빙글 도는 사람"이 된다.
+    g.rotate(-angle);
+    g.strokeStyle = legFill;
+    g.lineWidth = Math.max(1.5, u * (5.2 / 22));
+    g.lineCap = 'round';
+    for (const a of [Math.PI, Math.PI / 3, -Math.PI / 3]) {
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.lineTo(Math.cos(a) * legLen * mount, Math.sin(a) * legLen * mount);
+      g.stroke();
+    }
+    // 지지대 끝의 접지 발. 여기가 없으면 세 선이 별 무늬로 읽힌다.
+    g.fillStyle = ink;
+    for (const a of [Math.PI, Math.PI / 3, -Math.PI / 3]) {
+      g.beginPath();
+      g.arc(
+        Math.cos(a) * legLen * mount,
+        Math.sin(a) * legLen * mount,
+        Math.max(1, u * (2.6 / 22)),
+        0,
+        TAU,
+      );
+      g.fill();
+    }
+    g.restore();
+  }
+
   // ── ② 다리 ──
   // 몸통 뒤쪽에 붙어 걷기 위상만큼 앞뒤로 교차한다. 대부분 몸통에 가려지고 앞뒤 끝만
   // 삐져나온다 — 위에서 본 다리는 그게 전부다. 길게 그리는 순간 입면도가 된다.
-  g.save();
-  g.rotate(pose.hipTwist);
-  g.fillStyle = legFill;
-  // 널브러지면 다리가 벌어진다. 서 있을 땐 몸통 폭 안이라 실루엣이 하나로 읽힌다.
-  const splay = 1 + sprawl * 1.6;
-  for (const [sd, st] of [
-    [-1, pose.footL],
-    [1, pose.footR],
-  ] as const) {
+  // `legMass` 가 0 에 가까우면 아예 그리지 않는다(거치대가 그 자리를 대신한다).
+  if (legM > 0.02) {
     g.save();
-    g.translate(bodyX - torsoShortR * 0.42 + st * u * 0.16, sd * torsoLongR * 0.34 * splay);
-    g.rotate(sd * (0.16 + sprawl * 0.55) + st * 0.2);
-    g.beginPath();
-    g.ellipse(0, 0, legRx, legRy, 0, 0, TAU);
-    g.fill();
-    g.stroke();
+    g.rotate(pose.hipTwist);
+    g.fillStyle = legFill;
+    // 널브러지면 다리가 벌어진다. 서 있을 땐 몸통 폭 안이라 실루엣이 하나로 읽힌다.
+    const splay = 1 + sprawl * 1.6;
+    for (const [sd, st] of [
+      [-1, pose.footL],
+      [1, pose.footR],
+    ] as const) {
+      g.save();
+      g.translate(
+        bodyX - torsoShortR * 0.42 + st * u * 0.16,
+        sd * torsoLongR * 0.34 * splay,
+      );
+      g.rotate(sd * (0.16 + sprawl * 0.55) + st * 0.2);
+      g.beginPath();
+      g.ellipse(0, 0, legRx, legRy, 0, 0, TAU);
+      g.fill();
+      g.stroke();
+      g.restore();
+    }
     g.restore();
   }
-  g.restore();
 
   // ── ③ 몸통(어깨) ──
   // **긴 축이 옆(θ+90°) 방향이다.** 위에서 본 사람은 어깨가 진행 방향에 수직으로 넓고,

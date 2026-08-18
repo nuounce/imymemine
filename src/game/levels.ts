@@ -84,6 +84,9 @@ const STAGE_2: LevelDef = {
 /**
  * 3 — THE WEIGHT.
  * 발상: 발판은 무게만 묻는다. 상자 하나가 한 몸을 대신한다.
+ *
+ * 1막에는 경비를 두지 않는다. 상자를 미는 감각과 "발판은 사람이 아니어도 된다"는
+ * 아하가 이 방의 전부이며, 그 옆에 감시를 붙이면 아하가 아니라 회피 연습이 된다.
  */
 const STAGE_3: LevelDef = {
   id: '03_I',
@@ -108,7 +111,6 @@ const STAGE_3: LevelDef = {
   ],
   crates: [{ tx: 2, ty: 3 }],
   gates: [{ tx: 8, ty: 5, channel: 'weight' }],
-  guards: [{ path: [{ tx: 12, ty: 1 }, { tx: 12, ty: 8 }], waitTicks: 150, facing: 16 }],
   loot: { tx: 18, ty: 2 },
   escape: { tx: 18, ty: 7 },
 };
@@ -229,14 +231,25 @@ const STAGE_6: LevelDef = {
   plates: [{ tx: 1, ty: 10, channel: 'vault' }],
   buttons: [{ tx: 11, ty: 7, channel: 'vault', holdTicks: 240 }],
   gates: [{ tx: 21, ty: 5, channel: 'vault' }],
-  guards: [{ path: [{ tx: 12, ty: 5 }, { tx: 19, ty: 5 }], waitTicks: 90, facing: 0 }],
+  // HOUND 초등장. 시야는 좁아 y=5 동선을 정면으로 막지 않지만, 격자 소음이 닿는
+  // 자리(12,2)~(12,8)를 오르내린다 — 소음을 들으면 오래 문다. 남북 끝(y2·y8)에서
+  // 격자까지는 4.2타일이라 소음 반경(4타일) 밖이다. 그 대기 시간이 유일한 창이다.
+  guards: [
+    { path: [{ tx: 12, ty: 2 }, { tx: 12, ty: 8 }], waitTicks: 90, facing: 16, kind: 'HOUND' },
+  ],
   loot: { tx: 26, ty: 2 },
   escape: { tx: 26, ty: 10 },
 };
 
 /**
- * 7 — THE SEAL.
+ * 7 — THE SEAL. **BRUTE 초등장.**
  * 발상: 감시안을 끄는 손과 발판을 밟는 발이 **같은 몸**일 수 있다 (한 잔상 2역).
+ *
+ * 금고 안(x11~22)은 위 띠(y1~3)만 3타일 넓이고, 나머지 통로는 전부 1타일이다:
+ * 세로 통로 (11,4)(11,6)·(22,4)(22,6) 와 가로 복도 y=5 (x12~21은 위아래가 벽).
+ * 40px 인 BRUTE 는 그 어디에도 들어가지 못하므로 **위 띠에 갇혀 있다.**
+ * 코어를 띠의 북동쪽 끝(22,1)에 둔 이유가 그것이다 — 세로 통로로 올라가 낚아채고
+ * 다시 통로로 떨어지면 저 덩치는 따라 내려올 수 없다. 좁은 길이 곧 피난처다.
  */
 const STAGE_7: LevelDef = {
   id: '07_MY',
@@ -269,9 +282,11 @@ const STAGE_7: LevelDef = {
       disableChannel: 'cam',
     },
   ],
-  guards: [{ path: [{ tx: 16, ty: 2 }, { tx: 21, ty: 2 }], waitTicks: 40, facing: 32 }],
-  loot: { tx: 20, ty: 8 },
-  escape: { tx: 11, ty: 1, w: 2, h: 1 },
+  guards: [
+    { path: [{ tx: 15, ty: 2 }, { tx: 21, ty: 2 }], waitTicks: 40, facing: 32, kind: 'BRUTE' },
+  ],
+  loot: { tx: 22, ty: 1 },
+  escape: { tx: 11, ty: 8, w: 2, h: 1 },
 };
 
 /**
@@ -315,7 +330,15 @@ const STAGE_8: LevelDef = {
       disableChannel: 'cam',
     },
   ],
-  guards: [{ path: [{ tx: 13, ty: 10 }, { tx: 18, ty: 10 }], waitTicks: 40, facing: 0 }],
+  // 2막의 시험 — 새 유형은 없고 앞의 둘을 겹친다.
+  // BRUTE 는 격자방(x11~19) 한가운데를 세로로 오간다. 이 방의 출입구는 (10,6)·(20,6)
+  // 둘뿐이고 둘 다 1타일이라, 저 덩치는 방 밖으로 나오지 못한다 — 레버를 누르러
+  // 들어간 몸에게 그 두 칸이 유일한 피난처다.
+  // SENTRY 는 금고 안(x21~25)에서 코어(24,2)와 탈출구(24,10) 사이를 훑는다.
+  guards: [
+    { path: [{ tx: 16, ty: 2 }, { tx: 16, ty: 10 }], waitTicks: 45, facing: 16, kind: 'BRUTE' },
+    { path: [{ tx: 23, ty: 2 }, { tx: 23, ty: 10 }], waitTicks: 30, facing: 16 },
+  ],
   loot: { tx: 24, ty: 2 },
   escape: { tx: 24, ty: 10 },
 };
@@ -367,6 +390,13 @@ const STAGE_9: LevelDef = {
     { tx: 19, ty: 4, channel: 'hb' },
     { tx: 23, ty: 9, channel: 'ord' },
   ],
+  // WATCHER 초등장. 금고문(23,9) 앞은 이 지도의 유일한 목이라, 여기 붙은 눈은
+  // 직접 잡지 않아도 값이 있다 — 보이는 순간 순찰조가 그리로 온다.
+  // SENTRY 를 벽장 문줄(y5)에 두어 경보가 실제로 도착할 거리(7타일 이내)를 만든다.
+  guards: [
+    { path: [{ tx: 13, ty: 5 }, { tx: 20, ty: 5 }], waitTicks: 50, facing: 0 },
+    { path: [{ tx: 21, ty: 9 }], waitTicks: 6000, facing: 0, kind: 'WATCHER' },
+  ],
   loot: { tx: 26, ty: 7 },
   escape: { tx: 26, ty: 11 },
 };
@@ -388,9 +418,9 @@ const STAGE_10: LevelDef = {
     '#........#..........#.....#',
     '#........#..........#.....#',
     '#........#..........#.....#',
-    '#..S................#.....#',
+    '#..S.....#..........#.....#',
     '#.........................#',
-    '#...................#.....#',
+    '#........#..........#.....#',
     '#........#..........#.....#',
     '#........#..........#.....#',
     '#........#..........#.....#',
@@ -407,6 +437,13 @@ const STAGE_10: LevelDef = {
   plates: [{ tx: 2, ty: 8, channel: 'vault' }],
   buttons: [{ tx: 17, ty: 2, channel: 'vault', holdTicks: 200 }],
   gates: [{ tx: 20, ty: 5, channel: 'vault' }],
+  // 서쪽 방과 빛의 방을 잇는 길을 (9,5) 한 칸으로 좁혔다 — 그래서 이 방의 BRUTE 는
+  // 서쪽으로 나올 수 없고, 그 한 칸이 그대로 피난처가 된다.
+  // WATCHER 는 금고문 앞(17,5)에서 서쪽을 본다. 문 앞에서 기다리는 시간이 곧 위험이다.
+  guards: [
+    { path: [{ tx: 12, ty: 2 }, { tx: 12, ty: 8 }], waitTicks: 40, facing: 16, kind: 'BRUTE' },
+    { path: [{ tx: 17, ty: 5 }], waitTicks: 6000, facing: 0, kind: 'WATCHER' },
+  ],
   loot: { tx: 23, ty: 2 },
   escape: { tx: 23, ty: 8 },
 };
@@ -457,6 +494,12 @@ const STAGE_11: LevelDef = {
     { tx: 15, ty: 4, channel: 'gb' },
     { tx: 26, ty: 10, channel: 'ord' },
   ],
+  // HOUND 와 WATCHER 의 조합. 감시자는 금고문(26,10) 앞 목을 지키고, 사냥개는
+  // 그 경보 반경(7타일) 안을 훑는다 — 문 앞에서 한 번 보이면 개가 붙고, 개는 오래 문다.
+  guards: [
+    { path: [{ tx: 19, ty: 6 }, { tx: 19, ty: 9 }], waitTicks: 40, facing: 16, kind: 'HOUND' },
+    { path: [{ tx: 25, ty: 10 }], waitTicks: 6000, facing: 0, kind: 'WATCHER' },
+  ],
   loot: { tx: 29, ty: 8 },
   escape: { tx: 29, ty: 11 },
 };
@@ -506,9 +549,14 @@ const STAGE_12: LevelDef = {
       disableChannel: 'cam',
     },
   ],
+  // 북쪽 방(y1~3)에는 BRUTE, 남쪽 방(y7~9)에는 HOUND. 두 방을 잇는 길은
+  // 1타일짜리 동쪽 세로 통로 (26,4)(26,6) 와 1타일 높이 복도 y=5 뿐이라
+  // **덩치는 두 방 사이를 오갈 수 없다** — 탈출구(25,2)가 있는 북쪽 방이 그의 영역이고,
+  // 그 방에서 벗어나는 유일한 길이 세로 통로다.
+  // 남쪽의 사냥개는 미끼 잔상이 오래 붙들어 준다 — 한번 물면 안 놓기 때문에 그게 값이 된다.
   guards: [
-    { path: [{ tx: 14, ty: 2 }, { tx: 21, ty: 2 }], waitTicks: 40, facing: 32 },
-    { path: [{ tx: 16, ty: 8 }, { tx: 23, ty: 8 }], waitTicks: 40, facing: 32 },
+    { path: [{ tx: 14, ty: 2 }, { tx: 21, ty: 2 }], waitTicks: 40, facing: 32, kind: 'BRUTE' },
+    { path: [{ tx: 16, ty: 8 }, { tx: 23, ty: 8 }], waitTicks: 40, facing: 32, kind: 'HOUND' },
   ],
   loot: { tx: 24, ty: 8 },
   escape: { tx: 25, ty: 2, w: 2, h: 1 },
@@ -563,6 +611,17 @@ const STAGE_13: LevelDef = {
     },
   ],
   powerBuses: [{ bus: 'main', channels: ['eye', 'door'] }],
+  // 4막의 첫 방부터 세 유형이 한꺼번에 선다. 금고 안(x21~26)은 북쪽 띠에 BRUTE,
+  // 남쪽 띠에 HOUND 를 두고 가운데 줄(y4~6)만 비워 뒀다 — 코어(24,2)와 탈출구(24,8)가
+  // 각각 지켜지는 띠 안에 있으니, 두 띠를 **다른 시각에** 한 번씩 찌르는 수밖에 없다.
+  // 감시자는 금고 **안쪽**(26,5)에서 북쪽 띠를 본다. 복도 쪽을 보게 두면 문 앞에서
+  // 기다리는 것만으로 경보가 울려 두 경비가 문턱에 붙박이고, 그 방은 아무도 못 들어간다.
+  // 덩치의 피난처는 복도 y=5 의 x10~20 구간 — 위아래가 벽이라 40px 는 못 들어온다.
+  guards: [
+    { path: [{ tx: 24, ty: 2 }, { tx: 26, ty: 2 }], waitTicks: 60, facing: 32, kind: 'BRUTE' },
+    { path: [{ tx: 24, ty: 8 }, { tx: 26, ty: 8 }], waitTicks: 60, facing: 32, kind: 'HOUND' },
+    { path: [{ tx: 26, ty: 5 }], waitTicks: 6000, facing: 48, kind: 'WATCHER' },
+  ],
   loot: { tx: 24, ty: 2 },
   escape: { tx: 24, ty: 8 },
 };
@@ -582,15 +641,15 @@ const STAGE_14: LevelDef = {
   hint: '레이저, 눈, 문. 셋 다 끌 수는 없으니 하나씩 지나간다.',
   tiles: [
     '##################################',
-    '#........####################....#',
-    '#........####################....#',
-    '#..S.....####################....#',
-    '#........####################....#',
+    '#........##################......#',
+    '#........##################......#',
+    '#..S.....########.....#####......#',
+    '#........########.....#####......#',
     '#................................#',
-    '#........####################....#',
-    '#........####################....#',
-    '#........####################....#',
-    '#........####################....#',
+    '#........########.....#####......#',
+    '#........########.....#####......#',
+    '#........##################......#',
+    '#........##################......#',
     '##################################',
   ],
   plates: [
@@ -613,7 +672,7 @@ const STAGE_14: LevelDef = {
   ],
   cctvs: [
     {
-      tx: 24,
+      tx: 22,
       ty: 5,
       baseFacing: 32,
       sweepArc: 5,
@@ -621,10 +680,26 @@ const STAGE_14: LevelDef = {
       disableChannel: 'eye',
     },
   ],
-  gates: [{ tx: 28, ty: 5, channel: 'door' }],
+  gates: [{ tx: 26, ty: 5, channel: 'door' }],
   powerBuses: [{ bus: 'grid', channels: ['las', 'eye', 'door'] }],
-  loot: { tx: 31, ty: 2 },
-  escape: { tx: 31, ty: 8 },
+  // 이름값을 하는 방 하나를 복도 한가운데 뚫었다: **분기실**(x17~21, y3~7).
+  // 드나드는 곳은 (16,5)·(22,5) 두 칸뿐이고 둘 다 1타일이라, 이 방에 들어간 것은
+  // 복도로 못 나오고 복도에 있는 것은 이 방의 넓이를 못 쓴다.
+  // 방마다 **움직이는 경비는 하나씩만** 둔다 — 한 방에 둘을 세우면 par 3(잔상이
+  // 전부 발판에 묶여 미끼가 남지 않는다) 안에서 지나갈 창이 사라진다.
+  //   · 분기실: HOUND 가 세로로 오간다. 복도를 종주하려면 이 방 다섯 칸을 반드시
+  //     지나야 하고, 한번 물리면 오래 간다 — 개가 남북 끝에 있을 때만 건널 수 있다.
+  //   · 금고(x27~32): BRUTE 를 **안쪽 끝(x31)** 에 세로로 묶고 코어·탈출구는 문 바로
+  //     안쪽(x27)에 두었다. 찌르고 곧장 문칸(26,5)으로 물러나면 40px 는 그 칸에
+  //     못 들어온다. 반대로 덩치를 문 가까이 두면 알아채는 즉시 문턱에 눌러앉는다.
+  //   · WATCHER 는 금고 안쪽 벽(32,5)에서 북쪽을 본다.
+  guards: [
+    { path: [{ tx: 19, ty: 3 }, { tx: 19, ty: 7 }], waitTicks: 40, facing: 16, kind: 'HOUND' },
+    { path: [{ tx: 31, ty: 2 }, { tx: 31, ty: 8 }], waitTicks: 60, facing: 16, kind: 'BRUTE' },
+    { path: [{ tx: 32, ty: 5 }], waitTicks: 6000, facing: 48, kind: 'WATCHER' },
+  ],
+  loot: { tx: 27, ty: 2 },
+  escape: { tx: 27, ty: 8 },
 };
 
 /**
@@ -687,8 +762,22 @@ const STAGE_15: LevelDef = {
   ],
   gates: [{ tx: 25, ty: 6, channel: 'exit' }],
   powerBuses: [{ bus: 'core', channels: ['seq', 'exit'] }],
-  loot: { tx: 29, ty: 3 },
-  escape: { tx: 29, ty: 10 },
+  // 최종장 — **한 방에 움직이는 경비는 하나씩만** 둔다. 방마다 둘을 세워 보면
+  // par 3(잔상이 전부 발판에 묶여 미끼가 남지 않는다) 안에서 지나갈 창이 아예 사라진다.
+  //   · 순서방(x11~24): HOUND 가 x=22 를 세로로 오간다. 순차 버튼을 다 밟은 뒤
+  //     금고문으로 가려면 반드시 그 줄을 건너야 하고, 한번 물리면 오래 간다.
+  //   · 금고(x26~32): BRUTE 를 **안쪽 끝(x31)** 에 세로로 묶고 코어·탈출구는 문 바로
+  //     안쪽(x26)에 두었다 — 찌르고 곧장 (25,6) 한 칸으로 물러나면 40px 는 못 들어온다.
+  //     반대로 이 덩치를 문 가까이 두면 알아채는 즉시 문턱에 눌러앉아 아무도 못 들어간다.
+  //   · WATCHER 는 금고 **안쪽 벽**(32,6)에 세운다. 순서방 쪽을 보게 두면 코드를
+  //     밟는 내내 경보가 울려 금고 경비가 문턱에 붙박인다.
+  guards: [
+    { path: [{ tx: 22, ty: 10 }, { tx: 22, ty: 2 }], waitTicks: 40, facing: 48, kind: 'HOUND' },
+    { path: [{ tx: 31, ty: 2 }, { tx: 31, ty: 9 }], waitTicks: 60, facing: 16, kind: 'BRUTE' },
+    { path: [{ tx: 32, ty: 6 }], waitTicks: 6000, facing: 48, kind: 'WATCHER' },
+  ],
+  loot: { tx: 26, ty: 3 },
+  escape: { tx: 26, ty: 10 },
 };
 
 export const STAGES: LevelDef[] = [

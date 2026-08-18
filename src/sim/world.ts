@@ -18,7 +18,7 @@ import {
   BODY_SUB,
   GRATE_NOISE_INTERVAL,
   GRATE_NOISE_RADIUS,
-  GUARD_SUB,
+  GUARD_KINDS,
   IN_DOWN,
   IN_INTERACT,
   IN_LEFT,
@@ -58,6 +58,7 @@ import {
 } from './physics';
 import type {
   Body,
+  GuardKind,
   InputMask,
   LevelDef,
   SimState,
@@ -165,11 +166,19 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
     })),
     guards: (level.guards ?? []).map((g) => {
       const first = g.path[0] ?? { tx: spawnTx, ty: spawnTy };
+      // 유형이 없으면 SENTRY — 기존 스테이지 정의는 그대로 동작한다.
+      const kind: GuardKind = g.kind ?? 'SENTRY';
+      const sizeSub = GUARD_KINDS[kind].sizeSub;
+      const facing = g.facing ?? 0;
       return {
         id: id(),
-        x: tileTopLeft(first.tx) + (TILE_SUB - GUARD_SUB) / 2,
-        y: tileTopLeft(first.ty) + (TILE_SUB - GUARD_SUB) / 2,
-        facing: g.facing ?? 0,
+        kind,
+        sizeSub,
+        // 첫 웨이포인트 타일의 **중심**에 몸 중심을 맞춘다. BRUTE(40px)는 이 값이
+        // 음수가 되어 이웃 타일로 4px 씩 삐져나온다 — 그게 이 유형의 존재 이유다.
+        x: tileTopLeft(first.tx) + (TILE_SUB - sizeSub) / 2,
+        y: tileTopLeft(first.ty) + (TILE_SUB - sizeSub) / 2,
+        facing,
         state: 'PATROL' as const,
         detect: 0,
         path: g.path.map((p) => ({ x: tileCenter(p.tx), y: tileCenter(p.ty) })),
@@ -180,6 +189,13 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
         targetY: tileCenter(first.ty),
         targetBodyId: -1,
         stateTimer: 0,
+        sweepBase: facing,
+        sweepPhase: 0,
+        anchorX: tileCenter(first.tx),
+        anchorY: tileCenter(first.ty),
+        searchStep: -1,
+        chaseTimer: 0,
+        alarmCooldown: 0,
       };
     }),
     cctvs: (level.cctvs ?? []).map((c) => ({

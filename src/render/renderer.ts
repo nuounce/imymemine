@@ -16,9 +16,7 @@ import {
   CRATE_SIZE,
   DETECT_MAX,
   DIR_STEPS,
-  GUARD_FOV_TAN,
-  GUARD_SIZE,
-  GUARD_VIEW_RANGE,
+  GUARD_KINDS,
   IN_RUN,
   SLOT_NAMES,
   SUBPIXEL,
@@ -32,7 +30,7 @@ import type {
   SlotIndex,
   TickEvents,
 } from '../sim/types';
-import { drawTopFigure, STRIDE_PX, TOP_WARDEN_SHOULDER, topPose } from './figure';
+import { drawTopFigure, STRIDE_PX, TOP_BUILD, topPose } from './figure';
 import {
   A_CONE_CCTV,
   A_CONE_CHASE,
@@ -171,14 +169,77 @@ const LABEL_DIM = 0.3;
  * `drawTopFigure` 는 이 값에서 몸통 22×15, 머리 13, 팔 7 을 전부 파생시킨다.
  */
 const FIG_W = 22;
-/** 간수의 그려지는 어깨 폭(px) = 28. 그림자·라벨 반경을 몸통 크기에 맞추는 데만 쓴다. */
-const FIG_W_GUARD = FIG_W * TOP_WARDEN_SHOULDER;
 /** 라벨·꺾쇠가 피해야 하는 인물 반경(px). 어깨 반폭(11) + 팔(3.5) + 여유. */
 const FIG_R = FIG_W * 0.68;
-const FIG_R_GUARD = FIG_W_GUARD * 0.68;
 /** 접지 그림자 가로 폭(px). 세로는 절반, 알파는 0.35 — 바닥에 앉히는 가장 강력한 장치다. */
 const SHADOW_W = 20;
-const SHADOW_W_GUARD = SHADOW_W * TOP_WARDEN_SHOULDER;
+
+/**
+ * 경비 몸 크기(px) → 인물 작도 기준 단위.
+ *
+ * **경비의 그림 크기는 시뮬의 충돌 박스에서 파생된다** — 그래야 BRUTE 의 40px 박스가
+ * 화면에서도 40px 짜리 덩치로 보이고, "저건 좁은 길에 못 들어온다"가 눈으로 검증된다.
+ * 비율은 SENTRY(26px)가 예전 값 22 와 **정확히** 같아지도록 잡았다(22/26).
+ */
+const FIG_U_PER_BODY = FIG_W / GUARD_KINDS.SENTRY.size;
+
+/** 이 개체의 작도 기준 단위(px). 표가 아니라 **개체의 `sizeSub`** 에서 읽는다. */
+function guardFigU(g: Guard): number {
+  return P(g.sizeSub) * FIG_U_PER_BODY;
+}
+
+/**
+ * 이 개체의 **그려지는 어깨 폭**(px). 그림자·라벨·게이지 폭이 전부 여기서 파생된다 —
+ * 한 곳에서 나와야 덩치가 커질 때 UI 만 옛 크기로 남는 일이 없다.
+ * SENTRY 27.9 / HOUND 18.7 / BRUTE 51.4 / WATCHER 24.9 px.
+ */
+function guardShoulderPx(g: Guard): number {
+  return guardFigU(g) * TOP_BUILD[g.kind].shoulder;
+}
+
+/** 이 개체의 접지 그림자 폭(px). SENTRY 에서 예전 값 25.4 가 그대로 나온다. */
+function guardShadowW(g: Guard): number {
+  return guardShoulderPx(g) * (SHADOW_W / FIG_W);
+}
+
+/**
+ * 라벨·게이지·꺾쇠가 피해야 하는 **그려진 실루엣의 최대 반경**(px).
+ *
+ * 충돌 박스 반폭으로 잡으면 안 된다 — BRUTE 는 그려진 어깨(51px)가 박스(40px)보다
+ * 넓어서 라벨이 몸에 깔리고, WATCHER 는 삼각대가 몸통 밖으로 한참 뻗는다.
+ * 인물이 회전해도 값이 흔들리지 않도록 **모든 방향의 최대치**를 쓴다.
+ */
+function guardDrawR(g: Guard): number {
+  const u = guardFigU(g);
+  const b = TOP_BUILD[g.kind];
+  /** 팔 원과 잉크 지터가 실루엣 밖으로 삐져나오는 여유. 기존 `FIG_R` 의 0.68 = 0.5 × 1.36. */
+  const M = 1.36;
+  const longR = u * 0.5 * b.shoulder;
+  const shortR = u * (15 / 22) * 0.5 * b.shoulder * b.girth;
+  const headReach = u * (3 / 22) * b.headFwd + u * (13 / 22) * 0.5 * b.head;
+  return Math.max(
+    guardSizePx(g) / 2,
+    longR * M,
+    shortR * M,
+    headReach * M,
+    // 삼각대 도달 거리(`figure.ts` 의 `torsoLongR * 2.2`).
+    longR * 2.2 * b.mount,
+  );
+}
+
+/** 경비 몸 크기(px). 중심 좌표 계산용. */
+function guardSizePx(g: Guard): number {
+  return P(g.sizeSub);
+}
+
+/**
+ * WATCHER 경보 이펙트가 지속되는 틱 수.
+ *
+ * 경보는 다른 경비가 전부 이쪽으로 오게 만드는 사건이라 **놓치면 그 판이 끝난다.**
+ * 그래서 화면 신호가 링 한 겹으로는 부족하고, 콘을 훑고 지나가는 섬광까지 붙인다.
+ * 재발령 잠금(`ALARM_COOLDOWN_TICKS` = 120)보다 짧아야 이펙트가 겹쳐 밀리지 않는다.
+ */
+const ALARM_FX_TICKS = 30;
 /**
  * 플레이어·잔상의 **팔·다리** 굵기 배율. 머리·몸통 비례는 작도법에 고정이라 여기 안 걸린다.
  * 기본 굵기를 쓰면 팔이 1px 선이 되어 주사선·시야콘 위에서 사라진다.
@@ -267,6 +328,16 @@ export interface ViewState {
   gaits: Map<number, Gait>;
   /** guardId → 걷기 위상. 몸과 id 공간이 섞이지 않도록 맵을 따로 둔다. */
   guardGaits: Map<number, Gait>;
+  /**
+   * guardId → 직전 틱의 `alarmCooldown`.
+   *
+   * 경보가 **울린 순간**을 잡는 유일하게 정직한 방법이다: 잠금 카운터는 매 틱 줄어들다가
+   * 발령 순간에만 위로 튄다. `state` 를 보면 WATCHER 는 CHASE 에 들어가지 않으므로 못 잡고,
+   * `s.alerts` 는 누가 울렸는지 알려주지 않는다. 읽기만 하므로 결정론과 무관하다.
+   */
+  guardAlarmPrev: Map<number, number>;
+  /** guardId → 경보 이펙트 잔여 틱(0 = 없음). */
+  guardAlarmFx: Map<number, number>;
   /** gateId → 0(닫힘)..1(열림) 보간값. */
   gateAnim: Map<number, number>;
   /** 남은 흔들림 프레임. */
@@ -295,6 +366,8 @@ export function createView(): ViewState {
     trails: new Map(),
     gaits: new Map(),
     guardGaits: new Map(),
+    guardAlarmPrev: new Map(),
+    guardAlarmFx: new Map(),
     gateAnim: new Map(),
     shake: 0,
     flash: 0,
@@ -528,9 +601,43 @@ export function updateView(
       g.state === 'CHASE',
       false,
     );
+
+    // ── WATCHER 경보 ──
+    // 잠금 카운터가 **위로 튄** 틱이 곧 발령 순간이다. 첫 프레임에는 직전값이 없으므로
+    // 현재값으로 초기화해 둔다 — 레벨 진입 즉시 가짜 경보가 터지는 걸 막는다.
+    const prevAlarm = view.guardAlarmPrev.get(g.id);
+    if (prevAlarm !== undefined && g.alarmCooldown > prevAlarm) {
+      view.guardAlarmFx.set(g.id, ALARM_FX_TICKS);
+      const acx = P(g.x) + guardSizePx(g) / 2;
+      const acy = P(g.y) + guardSizePx(g) / 2;
+      // 방사 링 3겹을 시차로 쏜다. 한 겹은 게이트 토글과 헷갈리고, 세 겹이면
+      // "여기서 뭔가 퍼져 나갔다"가 화면 어디를 보고 있어도 주변시로 잡힌다.
+      for (let i = 0; i < 3; i++) {
+        view.rings.push({
+          x: acx,
+          y: acy,
+          age: -i * 5,
+          life: 30,
+          radius: 104,
+          color: C_GUARD,
+        });
+      }
+      view.flash = Math.max(view.flash, 0.28);
+      view.flashColor = C_GUARD;
+    }
+    view.guardAlarmPrev.set(g.id, g.alarmCooldown);
+
+    const fx = view.guardAlarmFx.get(g.id) ?? 0;
+    if (fx > 0) view.guardAlarmFx.set(g.id, fx - 1);
   }
   for (const id of [...view.guardGaits.keys()]) {
     if (!guardSeen.has(id)) view.guardGaits.delete(id);
+  }
+  for (const id of [...view.guardAlarmPrev.keys()]) {
+    if (!guardSeen.has(id)) view.guardAlarmPrev.delete(id);
+  }
+  for (const id of [...view.guardAlarmFx.keys()]) {
+    if (!guardSeen.has(id)) view.guardAlarmFx.delete(id);
   }
 
   // ── 게이트 개폐 보간 ──
@@ -563,8 +670,8 @@ export function updateView(
     for (const g of s.guards) {
       if (g.state === 'CHASE') {
         view.rings.push({
-          x: P(g.x) + GUARD_SIZE / 2,
-          y: P(g.y) + GUARD_SIZE / 2,
+          x: P(g.x) + guardSizePx(g) / 2,
+          y: P(g.y) + guardSizePx(g) / 2,
           age: 0,
           life: 24,
           radius: 46,
@@ -1733,37 +1840,79 @@ function drawCctvs(
   }
 }
 
+/**
+ * 콘 한 개를 그릴 레이 수. SENTRY(반각 50°, 224px)에서 정확히 26 이 나오는 밀도다.
+ * 각도만 보면 WATCHER 의 320px 짜리 긴 콘이 끝단에서 성기게 끊기므로 사거리로 한 번 더
+ * 보정한다 — 시야 **경계**가 곧 회피 정보라, 거기가 톱니로 보이면 안 된다.
+ */
+function coneRays(halfAngle: number, rangePx: number): number {
+  return Math.max(14, Math.round(((halfAngle * 2) / 0.0671) * Math.sqrt(rangePx / 224)));
+}
+
 function drawGuardCones(
   ctx: CanvasRenderingContext2D,
   s: SimState,
   view: ViewState,
 ): void {
-  const half = halfAngleOf(GUARD_FOV_TAN);
   for (const g of s.guards) {
-    const cx = P(g.x) + GUARD_SIZE / 2;
-    const cy = P(g.y) + GUARD_SIZE / 2;
+    // **시야콘 치수는 시뮬의 유형표에서 그대로 읽는다.** 여기에 연출용 배율을 곱하는
+    // 순간 "저 벽 뒤는 안전하다"가 거짓말이 되므로, 유형별 콘 모양은 내가 정하는 것이
+    // 아니라 `GUARD_KINDS` 가 정한다: HOUND 좁고(35°) 짧게(176), BRUTE 넓고(65°)
+    // 짧게(192), WATCHER 아주 길게(320) 가늘게(40°), SENTRY 기준(50°/224).
+    const spec = GUARD_KINDS[g.kind];
+    const half = halfAngleOf(spec.fovTan);
+    const range = P(spec.viewRange);
+    const rays = coneRays(half, range);
+    const cx = P(g.x) + guardSizePx(g) / 2;
+    const cy = P(g.y) + guardSizePx(g) / 2;
+    const ang = angleOf(g.facing);
+    const alarmFx = view.guardAlarmFx.get(g.id) ?? 0;
+
     const pts = conePolygon(
       s,
       cx,
       cy,
-      angleOf(g.facing),
+      ang,
       half,
-      P(GUARD_VIEW_RANGE),
-      26,
+      range,
+      rays,
       coneNoise(g),
       view.frame,
     );
-    fillCone(ctx, cx, cy, pts, C_GUARD, coneAlpha(g, view.frame));
+    // 경보 중에는 콘 전체가 세게 점멸한다 — 채우기만 밝아질 뿐 **넓어지지는 않는다.**
+    const flick =
+      alarmFx > 0 ? 0.2 * (alarmFx / ALARM_FX_TICKS) * (0.55 + Math.sin(view.frame * 0.9) * 0.45) : 0;
+    fillCone(ctx, cx, cy, pts, C_GUARD, coneAlpha(g, view.frame) + flick);
+
+    // 경보 섬광: 콘 **안쪽**에서 바깥으로 훑고 지나가는 밝은 띠.
+    // 콘이 순간적으로 커지는 것처럼 읽히지만 실제 시야 밖으로는 한 픽셀도 나가지 않는다
+    // (`conePolygon` 의 "그려진 콘은 실제 시야보다 절대 크지 않다" 규칙을 지킨다).
+    if (alarmFx > 0) {
+      const t = 1 - alarmFx / ALARM_FX_TICKS;
+      const sweep = conePolygon(
+        s,
+        cx,
+        cy,
+        ang,
+        half,
+        range * (0.12 + t * 0.88),
+        rays,
+        0,
+        view.frame,
+      );
+      fillCone(ctx, cx, cy, sweep, C_GUARD, 0.3 * (1 - t));
+    }
+
     // 추격 중에는 콘 안쪽에 한 겹을 더 태운다 — 붉은 덩어리가 나를 향해 밀려온다.
     if (g.state === 'CHASE') {
       const near = conePolygon(
         s,
         cx,
         cy,
-        angleOf(g.facing),
+        ang,
         half * 0.6,
-        P(GUARD_VIEW_RANGE) * 0.55,
-        14,
+        range * 0.55,
+        Math.max(10, Math.round(rays * 0.55)),
         CONE_NOISE[2],
         view.frame,
       );
@@ -2313,46 +2462,46 @@ function drawGuards(
   view: ViewState,
 ): void {
   for (const g of s.guards) {
+    const size = guardSizePx(g);
     const x = P(g.x);
     const y = P(g.y);
-    const cx = x + GUARD_SIZE / 2;
-    const cy = y + GUARD_SIZE / 2;
-    const top = cy - FIG_R_GUARD;
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+    const shoulder = guardShoulderPx(g);
+    const drawR = guardDrawR(g);
+    const top = cy - drawR;
+    const alarmFx = view.guardAlarmFx.get(g.id) ?? 0;
 
     if (g.state === 'CHASE') {
       const pulse = 0.3 + Math.sin(view.frame * 0.3) * 0.16;
-      const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, GUARD_SIZE * 1.5);
+      const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, size * 1.5);
       halo.addColorStop(0, withAlpha(C_GUARD, pulse));
       halo.addColorStop(1, withAlpha(C_GUARD, 0));
       ctx.fillStyle = halo;
-      ctx.fillRect(
-        cx - GUARD_SIZE * 1.5,
-        cy - GUARD_SIZE * 1.5,
-        GUARD_SIZE * 3,
-        GUARD_SIZE * 3,
-      );
+      ctx.fillRect(cx - size * 1.5, cy - size * 1.5, size * 3, size * 3);
     }
 
-    floorTint(ctx, cx, cy, GUARD_SIZE * 0.9, C_GUARD, 0.26);
-    contactShadow(ctx, cx, cy, SHADOW_W_GUARD, 1);
-    facingPip(ctx, cx, cy, g.facing, '#ffb0a8', 24, 7);
+    floorTint(ctx, cx, cy, size * 0.9, C_GUARD, 0.26);
+    contactShadow(ctx, cx, cy, guardShadowW(g), 1);
+    // 꺾쇠는 실루엣 밖에 놓는다. 고정 24px 로 두면 BRUTE(어깨 51)의 몸 **안쪽**에 찍혀
+    // 방향 정보가 실루엣에 먹히고, WATCHER 는 삼각대 다리 위에 겹친다.
+    facingPip(ctx, cx, cy, g.facing, '#ffb0a8', drawR + 5, 7);
 
-    // 간수는 플레이어와 **체형부터** 다르다: 몸통 긴 축 28(플레이어 22), 머리 14(13),
-    // 팔다리가 굵고(bulk), 상체가 덜 흔들린다(warden). 한눈에 "저건 내가 아니다".
+    // 유형은 **형태로만** 갈린다(색은 상태가 쓴다). 몸 크기는 시뮬의 충돌 박스에서
+    // 파생되므로 BRUTE 는 화면에서도 실제로 압도적이다 — 어깨 51px 대 SENTRY 28px.
     const gg = view.guardGaits.get(g.id);
     drawTopFigure(
       ctx,
       cx,
       cy,
-      FIG_W * gaitLift(gg),
+      guardFigU(g) * gaitLift(gg),
       gg?.drawAng ?? angleOf(g.facing),
       topPose({
         phase: gg?.phase ?? 0,
         run: gg?.run ?? 0,
         motion: gg?.motion ?? 0,
         lean: leanOf(gg),
-        hairMass: 0.26,
-        warden: true,
+        build: g.kind,
       }),
       {
         color: C_GUARD,
@@ -2363,9 +2512,27 @@ function drawGuards(
       },
     );
 
+    // 경보를 울리는 순간의 몸 신호: 흰빛으로 달아오르는 링 두 겹.
+    // 방사 링(`view.rings`)은 사방으로 퍼지고, 이건 **누가** 울렸는지를 못 박는다.
+    if (alarmFx > 0) {
+      const t = 1 - alarmFx / ALARM_FX_TICKS;
+      const blink = 0.55 + Math.sin(view.frame * 0.9) * 0.45;
+      ctx.strokeStyle = withAlpha('#ffd9d2', (1 - t) * blink * 0.95);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, drawR + t * 6, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = withAlpha(C_GUARD, (1 - t) * 0.7);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, drawR + 5 + t * 14, 0, TAU);
+      ctx.stroke();
+    }
+
     // 감지 게이지 — 언제 SUSPICIOUS 로 넘어가는지 플레이어가 읽을 수 있어야 한다.
+    // 폭도 어깨를 따라간다: BRUTE 위에 26px 막대만 떠 있으면 몸에 비해 사라진다.
     if (g.detect > 0) {
-      const w = 26;
+      const w = Math.max(26, shoulder * 0.9);
       const frac = Math.max(0, Math.min(1, g.detect / DETECT_MAX));
       ctx.fillStyle = withAlpha('#000000', 0.6);
       ctx.fillRect(cx - w / 2, top - 8, w, 4);
@@ -2387,12 +2554,13 @@ function drawGuards(
       ctx.fillText(tag, cx, top - 12);
     }
 
-    // WARDEN(간수). 감지 게이지와 !/? 는 위쪽을 이미 쓰고 있으니 라벨은 발밑에.
+    // 유형 이름. 감지 게이지와 !/? 는 위쪽을 이미 쓰고 있으니 라벨은 발밑에.
+    // 실루엣이 아직 안 외워진 플레이어에게는 이 한 줄이 유일한 확답이다.
     ctx.fillStyle = withAlpha(C_GUARD, 0.5);
     ctx.font = font(7, 'bold');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('WARDEN', cx, y + GUARD_SIZE + 9);
+    ctx.fillText(g.kind, cx, cy + drawR + 9);
   }
 }
 

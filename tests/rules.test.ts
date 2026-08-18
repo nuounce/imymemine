@@ -598,14 +598,16 @@ const SOLO_ATTEMPTS: Record<string, Parameters<typeof driveWaypoints>[1]> = {
     { tx: 26, ty: 2, run: true },
     { tx: 26, ty: 10, run: true },
   ],
-  // 07_MY: 레버로 눈을 감기고 발판 → 버튼 → 달려서 게이트.
+  // 07_MY: 레버로 눈을 감기고 발판 → 버튼 → 달려서 게이트 → 코어(22,1) → escape(11,8).
   '07_MY': [
     { tx: 2, ty: 7, press: true },
     { tx: 6, ty: 7, run: true, wait: 30 },
     { tx: 4, ty: 1, run: true, press: true },
     { tx: 10, ty: 5, run: true },
-    { tx: 20, ty: 8, run: true },
-    { tx: 11, ty: 1, run: true },
+    { tx: 22, ty: 5, run: true },
+    { tx: 22, ty: 1, run: true },
+    { tx: 22, ty: 8, run: true },
+    { tx: 11, ty: 8, run: true },
   ],
   // 08_MY: 발판 → 격자 위 레버 → 달려서 금고문.
   '08_MY': [
@@ -680,9 +682,9 @@ const SOLO_ATTEMPTS: Record<string, Parameters<typeof driveWaypoints>[1]> = {
     { tx: 1, ty: 1, run: true, wait: 20 },
     { tx: 1, ty: 5, run: true, wait: 20 },
     { tx: 1, ty: 8, run: true, wait: 20 },
-    { tx: 27, ty: 5, run: true },
-    { tx: 31, ty: 2, run: true },
-    { tx: 31, ty: 8, run: true },
+    { tx: 25, ty: 5, run: true },
+    { tx: 27, ty: 2, run: true },
+    { tx: 27, ty: 8, run: true },
   ],
   // 15_MINE_FINAL: 순서를 혼자 다 밟고 발판 셋도 혼자 훑어 본다.
   '15_MINE_FINAL': [
@@ -693,8 +695,8 @@ const SOLO_ATTEMPTS: Record<string, Parameters<typeof driveWaypoints>[1]> = {
     { tx: 1, ty: 6, run: true, wait: 20 },
     { tx: 1, ty: 10, run: true, wait: 20 },
     { tx: 24, ty: 6, run: true },
-    { tx: 29, ty: 3, run: true },
-    { tx: 29, ty: 10, run: true },
+    { tx: 26, ty: 3, run: true },
+    { tx: 26, ty: 10, run: true },
   ],
 };
 

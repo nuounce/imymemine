@@ -79,8 +79,22 @@ export type GuardState =
   | 'CHASE'
   | 'RETURN';
 
+/**
+ * 경비 유형. 하나뿐인 경비는 "정면만 피하면 되는 장애물"이 되므로 넷으로 나눈다.
+ * 각 유형의 수치는 `constants.ts` 의 `GUARD_KINDS` 한 곳에만 있다.
+ *
+ * - `SENTRY`  기준값. 아무것도 지정하지 않으면 이 유형이다.
+ * - `HOUND`   시야가 좁아 피하기 쉽지만 한번 물면 오래 쫓는다 → 도망이 아니라 따돌려야 한다.
+ * - `BRUTE`   몸이 40px 라 1타일(32px) 통로에 **물리적으로** 들어가지 못한다 → 좁은 길이 피난처가 된다.
+ * - `WATCHER` 직접 잡지 않는다. 게이지가 차면 경보를 울려 다른 경비를 부른다 → 느린 적이 더 무섭다.
+ */
+export type GuardKind = 'SENTRY' | 'HOUND' | 'BRUTE' | 'WATCHER';
+
 export interface Guard {
   id: number;
+  kind: GuardKind;
+  /** 이 개체의 충돌 박스 한 변 (서브픽셀). 유형마다 다르다. */
+  sizeSub: number;
   x: number;
   y: number;
   facing: number;
@@ -98,6 +112,25 @@ export interface Guard {
   /** 현재 추적 중인 Body id (-1 = 없음) */
   targetBodyId: number;
   stateTimer: number;
+
+  // ── 두리번거리기 (PATROL 대기 중) ────────────────────────────────────────
+  /** 대기 시작 시점의 facing. 스윕은 이 값 좌우로 흔들린다. */
+  sweepBase: number;
+  /** 대기 스윕 위상 (틱). 대기를 시작할 때 0 으로 리셋된다. */
+  sweepPhase: number;
+
+  // ── 수색 (INVESTIGATE) ───────────────────────────────────────────────────
+  /** 수색의 기준점 = 최초로 향한 지점(소음/경보 지점). */
+  anchorX: number;
+  anchorY: number;
+  /** -1 = 아직 기준점으로 이동 중. 0.. = `SEARCH_OFFSETS` 의 몇 번째를 훑는 중. */
+  searchStep: number;
+
+  // ── 추격 지속 / 경보 ─────────────────────────────────────────────────────
+  /** CHASE 잔여 틱. 대상을 보고 있으면 매 틱 최대치로 갱신된다. */
+  chaseTimer: number;
+  /** 경보 재발령 잠금 (WATCHER). 0 이어야 다시 울린다. */
+  alarmCooldown: number;
 }
 
 export interface Cctv {
@@ -296,6 +329,8 @@ export interface LevelDef {
     path: { tx: number; ty: number }[];
     waitTicks?: number;
     facing?: number;
+    /** 생략 시 `'SENTRY'`. 기존 스테이지 정의는 한 글자도 고치지 않아도 된다. */
+    kind?: GuardKind;
   }[];
   cctvs?: {
     tx: number;

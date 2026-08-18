@@ -27,10 +27,10 @@ import {
   startStage,
   tickSession,
 } from '../src/game/session';
-import { BODY_SUB, LOOP_TRANSITION_TICKS, TILE_SUB } from '../src/sim/constants';
+import { BODY_SUB, LOOP_TRANSITION_TICKS, TILE, TILE_SUB } from '../src/sim/constants';
 import type { LevelDef, Tape } from '../src/sim/types';
 import { createWorld, stepWorld } from '../src/sim/world';
-import { D, E, L, O, R, RUN, U, playSolution, seg, tape, tiles } from './tapes';
+import { D, E, L, O, R, RUN, U, playSolution, seg, tape, tiles, type Seg } from './tapes';
 
 interface Solution {
   level: LevelDef;
@@ -92,7 +92,7 @@ const S3: Solution = {
   level: STAGES[2]!,
   roles: [
     'MY: 상자를 발판 A 로 밀어넣고 자신은 발판 B 위에서 확정 — 한 몸이 두 발판을 채운다',
-    'I: 경비가 남쪽 끝에서 대기하는 창을 이용해 복도 통과 → loot → escape',
+    'I: 열린 복도를 통과 → loot → escape (1막에는 경비가 없다)',
   ],
   loops: [
     tape([
@@ -200,7 +200,9 @@ const S5: Solution = {
  * 그래서 아래 `S6`(내가 우회로) 와 `S6_ALT`(내가 격자) 를 **각각** 돌려 증명한다.
  * 격자 4타일을 지나면 10틱마다 소음이 나고, 경비(12,5)~(19,5)가 그것을 듣는다.
  */
-const S6_PRESS = 760;
+const S6_PRESS = 820;
+/** 조작 몸이 게이트 앞(20,5)에 서는 틱. 버튼 뒤 240틱(holdTicks) 안이면 된다. */
+const S6_ARRIVE = 980;
 const S6_PLATE = tape([seg(D, tiles(8)), seg(L, tiles(3)), seg(O, 4)]);
 /** 버튼(11,7)까지 격자 지름길 12타일. */
 const s6BtnGrate = (t: number): Tape =>
@@ -254,57 +256,66 @@ const S6: Solution = {
   level: STAGES[5]!,
   roles: [
     'MY: 남쪽 발판(1,10) — 금고 채널의 절반',
-    `ME: 격자를 밟고 지름길로 버튼(11,7) → ${S6_PRESS}틱에 누른다. 소음은 경비를 서쪽으로 끌어당긴다`,
-    'I: 값을 치르지 않는 쪽 — 남쪽 우회로로 192틱을 더 걷고, 조용히 게이트 앞에 선다',
+    `ME: 격자를 밟고 지름길로 버튼(11,7) → ${S6_PRESS}틱에 누른다. 그 소리에 사냥개가 물고 끝내 이 몸을 덮치지만, 버튼은 이미 눌렸다 — 그게 미끼값이다`,
+    'I: 값을 치르지 않는 쪽 — 남쪽 우회로로 160틱을 더 걷고, 개가 서쪽에 붙어 있는 동안 조용히 게이트 앞에 선다',
   ],
-  loops: [S6_PLATE, s6BtnGrate(S6_PRESS), s6LiveSouth(S6_PRESS)],
+  loops: [S6_PLATE, s6BtnGrate(S6_PRESS), s6LiveSouth(S6_ARRIVE)],
 };
 
 const S6_ALT: Solution = {
   level: STAGES[5]!,
   roles: [
     'MY: 남쪽 발판(1,10)',
-    'ME: 조용한 우회로로 버튼까지 — 경비는 순찰을 계속한다',
-    'I: 이번엔 내가 격자를 밟는다. 빠르지만 경비의 순찰 창을 정확히 맞춰야 한다',
+    'ME: 조용한 우회로로 버튼까지 — 개는 순찰을 계속한다',
+    'I: 이번엔 내가 격자를 밟는다. 빠르지만 개가 남북 끝에서 쉬는 창을 정확히 맞춰야 한다',
   ],
-  loops: [S6_PLATE, s6BtnSouth(S6_PRESS), s6LiveGrate(S6_PRESS)],
+  loops: [S6_PLATE, s6BtnSouth(S6_PRESS), s6LiveGrate(S6_ARRIVE)],
 };
 
 // ── 7. THE SEAL — 한 잔상이 레버와 발판을 겸한다 ──────────────────────────
+/**
+ * 코어(22,1)는 BRUTE 가 갇혀 있는 위 띠의 북동쪽 끝이다. 조작 몸은 1타일 세로
+ * 통로 x=22 를 타고 올라가 낚아채고 다시 그 통로로 떨어진다 — 40px 는 못 따라온다.
+ */
 const S7: Solution = {
   level: STAGES[6]!,
   roles: [
     'MY: 레버로 CCTV 를 끄고 이어서 발판으로 이동 — 2역',
     'ME: 130틱에 시간차 버튼',
-    'I: 게이트 통과 → 남쪽 loot → 북쪽 escape',
+    'I: 게이트 통과 → 세로 통로 x22 로 올라가 코어(22,1) → 덩치가 덮치기 전에 같은 통로로 떨어져 남쪽 escape(11,8)',
   ],
   loops: [
     tape([seg(D, tiles(4)), seg(E, 1), seg(R, tiles(3)), seg(O, 4)]),
     tape([seg(U, tiles(2)), seg(O, 98), seg(E, 1), seg(O, 10)]),
     tape([
-      seg(O, 20),
+      seg(O, 100),
       seg(D, tiles(2)),
       seg(R, tiles(19)),
-      seg(D, tiles(3)),
+      seg(U, tiles(4)),
+      seg(D, tiles(7)),
       seg(L, tiles(11)),
-      seg(U, tiles(7)),
     ]),
   ],
 };
 
 // ── 8. THE VIGIL — 조용히 갈 수 없는 곳에 스위치가 있다 ───────────────────
+/**
+ * 격자방(x11~19)에는 BRUTE 가, 금고 안(x21~25)에는 SENTRY 가 있다.
+ * 조작 몸은 덩치에게 방을 가로질러 쫓기지만 (20,6) 한 칸으로 빠져나가고,
+ * 덩치는 그 칸 앞(x≈19.4)에서 멈춘다.
+ */
 const S8: Solution = {
   level: STAGES[7]!,
   roles: [
     'MY: 북서 발판(1,1) — 금고문을 계속 열어 둔다',
-    'ME: 격자판을 밟고 레버(14,6)까지 — 감시안은 꺼지지만 그 발소리가 경비를 부른다',
-    'I: 소리가 잦아들기를 기다렸다가 눈이 감긴 복도를 종주 → loot → escape',
+    'ME: 격자판을 밟고 레버(14,6)까지 — 감시안은 꺼지지만 그 발소리가 덩치를 부른다',
+    'I: 격자방을 가로질러 (20,6) 한 칸으로 탈출 → 금고 안 SENTRY 를 앞질러 loot → escape',
   ],
   loops: [
     tape([seg(L, tiles(2)), seg(U, tiles(1)), seg(O, 4)]),
     tape([seg(D, tiles(4)), seg(R, tiles(11)), seg(E, 1), seg(O, 4)]),
     tape([
-      seg(O, 500), // 경비가 소음 수색을 끝내고 순찰로 돌아갈 때까지 기다린다
+      seg(O, 270), // 덩치가 남쪽 끝으로 내려가는 창을 기다린다
       seg(D, tiles(4)),
       seg(R, tiles(21)),
       seg(U, tiles(4)),
@@ -323,15 +334,17 @@ const S9: Solution = {
   roles: [
     'MY: 서쪽 발판(2,11) — 벽장 B 의 문(12,4)을 붙잡는다',
     'ME: 동쪽 발판(21,11) — 벽장 C 의 문(19,4)을 붙잡는다. 두 발판은 지도 양끝이라 한 몸으로는 못 겹친다',
-    'I: 0 → 1 → 2 를 순서대로 눌러 금고문을 열고 → loot → escape',
+    'I: 문줄(y5)을 오가는 SENTRY 를 두 번 흘려보내며 0 → 1 → 2 를 누르고, 금고문 앞 WATCHER 의 경보보다 먼저 안으로 → loot → escape',
   ],
   loops: [
     tape([seg(D, tiles(5)), seg(O, 4)]),
     tape([seg(D, tiles(5)), seg(R, tiles(19)), seg(O, 4)]),
     tape([
       seg(R, tiles(3)), seg(U, tiles(3)), seg(E, 1), seg(O, 1), // order 0 (5,3)
-      seg(D, tiles(2)), seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 1 (12,3)
-      seg(D, tiles(2)), seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 2 (19,3)
+      seg(D, tiles(2)), seg(O, 240), // 순찰이 동쪽으로 지나갈 때까지 벽장 앞에서 죽는다
+      seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 1 (12,3)
+      seg(D, tiles(2)), seg(O, 80),
+      seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 2 (19,3)
       seg(D, tiles(6)), seg(R, tiles(4)), seg(R, tiles(3)), // 금고문(23,9) 통과
       seg(U, tiles(2)), seg(D, tiles(4)),
     ]),
@@ -377,7 +390,7 @@ const S11: Solution = {
     `MY: 남동쪽 버튼(24,11) — ${S11_A}틱에 벽장 A 의 문(6,4)을 90틱 연다`,
     `ME: 서쪽 버튼(2,5) — ${S11_B}틱에 벽장 B 의 문(15,4)을 90틱 연다`,
     'MINE: 발판(1,11) — 탈출 게이트 채널의 나머지 절반',
-    'I: 0(10,6) → 열린 A 에서 1 → 열린 B 에서 2 → 금고문 → loot → escape',
+    'I: 0(10,6) → 열린 A 에서 1 → 열린 B 에서 2 → 사냥개가 북쪽으로 올라간 창을 기다렸다가 금고문 → loot → escape',
   ],
   loops: [
     tape([
@@ -391,7 +404,9 @@ const S11: Solution = {
       seg(R, tiles(8)), seg(E, 1), seg(O, 1), // order 0
       seg(L, tiles(4)), seg(U, tiles(3)), seg(E, 1), seg(O, 1), // order 1 (6,3)
       seg(D, tiles(3)), seg(R, tiles(9)), seg(U, tiles(3)), seg(E, 1), seg(O, 1), // order 2 (15,3)
-      seg(D, tiles(3)), seg(D, tiles(4)), seg(R, tiles(11)), seg(R, tiles(3)),
+      seg(D, tiles(3)), seg(D, tiles(4)),
+      seg(O, 150), // 금고문 앞 목이 비기를 기다린다 — 여기서 보이면 개가 붙는다
+      seg(R, tiles(11)), seg(R, tiles(3)),
       seg(U, tiles(2)), seg(D, tiles(3)),
     ]),
   ],
@@ -462,14 +477,14 @@ const S12: Solution = {
 
 // ── 13. THE BREAKER — 문과 눈 중 하나 ─────────────────────────────────────
 /** 잔상 셋이 **동시에** 발판을 채우는 틱. 이때 전력이 눈에서 문으로 넘어간다. */
-const S13_CLOSE = 560;
+const S13_CLOSE = 520;
 const S13: Solution = {
   level: STAGES[12]!,
   roles: [
     'MY: 레버(8,8)로 먼저 감시안을 끈다 — 그리고 남쪽 발판(1,8)으로 이동해 대기 (2역)',
     'ME: 북서 발판(1,1)',
     `MINE: 마지막 발판(1,5)을 ${S13_CLOSE}틱에 밟는다 — 문이 열리는 대신 눈이 다시 뜬다`,
-    'I: 눈이 감긴 동안 복도를 건너 게이트 앞(19,5)에 서 있다가, 열리는 즉시 들어간다',
+    'I: 눈이 감긴 동안 복도를 건너 게이트 앞(19,5)에 서 있다가, 가운데 줄(24,5)에서 한 박자 죽인 뒤 북쪽 띠의 코어를 찌르고 곧장 남쪽 띠의 탈출구로 내려간다',
   ],
   loops: [
     tape([
@@ -483,21 +498,26 @@ const S13: Solution = {
       seg(D, tiles(2)), seg(R, tiles(16)),
       seg(O, S13_CLOSE - 200 - tiles(18)),
       seg(R, tiles(1)), seg(R, tiles(4)),
-      seg(U, tiles(3)), seg(D, tiles(6)),
+      seg(O, 50), // 덩치가 동쪽 끝으로 물러날 때까지 가운데 줄에서 기다린다
+      seg(U, tiles(3)), seg(D, tiles(3)), seg(D, tiles(3)),
     ]),
   ],
 };
 
 // ── 14. THE JUNCTION — 셋을 시간으로 나눠 지나간다 ────────────────────────
 const S14_EYE = 380; // 레버 eye 를 켜 전력을 빼앗는 틱 (= 레이저가 되살아나는 틱)
-const S14_DOOR = 600; // 발판 셋이 채워져 문이 전력을 가져가는 틱
+const S14_DOOR = 660; // 발판 셋이 채워져 문이 전력을 가져가는 틱
+/** 문칸(26,5)에서 죽이는 박자. 금고 안쪽 끝의 덩치가 물러나기를 기다린다. */
+const S14_W1 = 240;
+const S14_W2 = 20;
 const S14: Solution = {
   level: STAGES[13]!,
   roles: [
     'MY: 레버(7,1)로 레이저를 끈다 → 발판(1,1) 로 이동 (2역)',
     `ME: ${S14_EYE}틱에 레버(7,8)로 감시안을 끈다 — 그 순간 레이저가 되살아난다 → 발판(1,8) (2역)`,
     `MINE: ${S14_DOOR}틱에 마지막 발판(1,5) — 문이 전력을 가져가고 눈이 다시 뜬다`,
-    'I: 레이저가 죽은 동안 x13 을 건너고, 눈이 감긴 동안 CCTV 구간을 지나 게이트 앞에 선다',
+    'I: 레이저가 죽은 동안 x13 을 건너고, 눈이 감긴 동안 분기실(x17~21)의 사냥개를 흘려보내며 CCTV 구간을 지나 ' +
+      '문칸(26,5)에 선다. 거기서 코어(27,2)와 탈출구(27,8)를 한 번씩 찌르고 매번 그 한 칸으로 물러난다',
   ],
   loops: [
     tape([seg(U, tiles(2)), seg(R, tiles(4)), seg(E, 1), seg(L, tiles(6)), seg(O, 4)]),
@@ -509,44 +529,139 @@ const S14: Solution = {
     tape([seg(O, S14_DOOR - tiles(4)), seg(L, tiles(2)), seg(D, tiles(2)), seg(O, 4)]),
     tape([
       seg(O, 150),
-      seg(D, tiles(2)), seg(R, tiles(24)),
-      seg(O, S14_DOOR - 150 - tiles(26)),
-      seg(R, tiles(1)), seg(R, tiles(3)),
-      seg(U, tiles(3)), seg(D, tiles(6)),
+      seg(D, tiles(2)), seg(R, tiles(22)),
+      seg(O, S14_DOOR - 150 - tiles(24)),
+      seg(R, tiles(1)), seg(O, S14_W1), // 문칸(26,5)
+      seg(R, tiles(1)), seg(U, tiles(3)), seg(D, tiles(3)), seg(L, tiles(1)), // 코어(27,2)
+      seg(O, S14_W2),
+      seg(R, tiles(1)), seg(D, tiles(3)), // 탈출구(27,8)
     ]),
   ],
 };
 
 // ── 15. THE LAST DOOR — 문이 열리면 지나온 길이 닫힌다 ────────────────────
-const S15_DOOR = 800;
-/** 순차 버튼 → 레이저 통과 → 게이트 앞까지의 길이. 여기서 남는 만큼만 기다린다. */
-const S15_RUN =
-  tiles(3) + tiles(10) + tiles(4) + 2 + tiles(8) + tiles(4) + 2 +
-  tiles(7) + tiles(1) + 2 + tiles(3) + tiles(6);
+const S15_DOOR = 1500;
+/**
+ * 순차 버튼 사이에 넣는 박자. x=22 를 세로로 오가는 사냥개가 비켜 주기를 기다리는
+ * 시간이며, 마지막 두 값은 금고 문칸(25,6)에서 덩치가 물러나기를 기다리는 시간이다.
+ */
+const S15_W1 = 100;
+const S15_W2 = 120;
+const S15_W3 = 40;
+const S15_W4 = 60;
+const S15_W5 = 20;
+/** 순차 버튼 0→1→2 를 밟고 죽은 레이저(x20)를 건너 게이트 앞(24,6)에 서기까지. */
+const S15_HEAD: Seg[] = [
+  seg(D, tiles(3)), seg(R, tiles(7)), seg(R, tiles(3)),
+  seg(U, tiles(4)), seg(E, 1), seg(O, 1), // order 0 (13,2)
+  seg(O, S15_W1),
+  seg(D, tiles(8)), seg(R, tiles(4)), seg(E, 1), seg(O, 1), // order 1 (17,10)
+  seg(O, S15_W2),
+  seg(U, tiles(7)), seg(R, tiles(1)), seg(E, 1), seg(O, 1), // order 2 (18,3) → seq 완성
+  seg(O, S15_W3),
+  seg(D, tiles(3)), seg(R, tiles(6)),
+];
+const S15_RUN = S15_HEAD.reduce((n, s) => n + s.ticks, 0);
 const S15: Solution = {
   level: STAGES[14]!,
   roles: [
     'MY: 발판(1,1)',
     'ME: 발판(1,6)',
-    'MINE: 발판(1,10) — 셋이 동시에 눌리는 800틱에 전력이 exit 으로 넘어간다',
-    'I: 순차 버튼 0→1→2 로 레이저와 감시안을 죽이고, 그 사이에 레이저 동쪽으로 건너가 기다린다',
+    `MINE: 발판(1,10) — 셋이 동시에 눌리는 ${S15_DOOR}틱에 전력이 exit 으로 넘어간다`,
+    'I: 순차 버튼 0→1→2 로 레이저와 감시안을 죽이고, 사냥개가 비운 x22 를 건너 문 앞에 선다. ' +
+      '문칸(25,6)은 40px 가 못 들어오는 자리라, 코어와 탈출구를 한 번씩 찌르고 그 칸으로 물러난다',
   ],
   loops: [
     tape([seg(O, S15_DOOR - tiles(4)), seg(L, tiles(2)), seg(U, tiles(2)), seg(O, 4)]),
     tape([seg(O, S15_DOOR - tiles(5)), seg(L, tiles(2)), seg(D, tiles(3)), seg(O, 4)]),
     tape([seg(O, S15_DOOR - tiles(9)), seg(L, tiles(2)), seg(D, tiles(7)), seg(O, 4)]),
     tape([
-      seg(D, tiles(3)), seg(R, tiles(7)), seg(R, tiles(3)),
-      seg(U, tiles(4)), seg(E, 1), seg(O, 1), // order 0 (13,2)
-      seg(D, tiles(8)), seg(R, tiles(4)), seg(E, 1), seg(O, 1), // order 1 (17,10)
-      seg(U, tiles(7)), seg(R, tiles(1)), seg(E, 1), seg(O, 1), // order 2 (18,3) → seq 완성
-      seg(D, tiles(3)), seg(R, tiles(6)), // 죽은 레이저(x20)를 건너 게이트 앞(24,6)
+      ...S15_HEAD,
       seg(O, S15_DOOR - S15_RUN),
-      seg(R, tiles(1)), seg(R, tiles(4)),
-      seg(U, tiles(3)), seg(D, tiles(7)),
+      seg(R, tiles(1)), seg(O, S15_W4), // 문칸(25,6)
+      seg(R, tiles(1)), seg(U, tiles(3)), seg(D, tiles(3)), seg(L, tiles(1)), // 코어(26,3)
+      seg(O, S15_W5), // 다시 문칸에서 한 박자
+      seg(R, tiles(1)), seg(D, tiles(4)), // 탈출구(26,10)
     ]),
   ],
 };
+
+// ══════════════════════════════════════════════════════════════════════════
+// BRUTE 배치 규약 — 좁은 통로가 실제로 도피로인가
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * BRUTE 는 몸이 40px 라 32px 통로에 **물리적으로** 못 들어간다 (constants.ts).
+ * 그러니 이 유형을 쓰는 방에는 두 가지가 동시에 성립해야 한다.
+ *   (1) 순찰 지점마다 40px 가 설 수 있다 — 아니면 스폰부터 벽에 낀다.
+ *   (2) 그 근처에 **BRUTE 는 못 들어가는데 몸(24px)은 들어가는 칸**이 있다.
+ * (2)가 없으면 "저 길로 도망치면 못 따라온다"가 성립하지 않고, BRUTE 는
+ * 그냥 느리고 눈 밝은 경비가 된다.
+ */
+const BRUTE_PX = 40;
+const REFUGE_SEARCH_RADIUS = 12;
+
+function tileIsWall(level: LevelDef, tx: number, ty: number): boolean {
+  if (ty < 0 || ty >= level.tiles.length) return true;
+  const row = level.tiles[ty]!;
+  if (tx < 0 || tx >= row.length) return true;
+  return row[tx] === '#';
+}
+
+/** 40px 박스의 **중심이 이 타일 안**인 위치가 하나라도 벽에 닿지 않는가. */
+function bruteCanStand(level: LevelDef, tx: number, ty: number): boolean {
+  if (tileIsWall(level, tx, ty)) return false;
+  const half = BRUTE_PX / 2;
+  for (let ox = 0; ox < TILE; ox++) {
+    for (let oy = 0; oy < TILE; oy++) {
+      const x0 = tx * TILE + ox - half;
+      const y0 = ty * TILE + oy - half;
+      let ok = true;
+      for (let gx = Math.floor(x0 / TILE); gx <= Math.floor((x0 + BRUTE_PX - 1) / TILE); gx++) {
+        for (let gy = Math.floor(y0 / TILE); gy <= Math.floor((y0 + BRUTE_PX - 1) / TILE); gy++) {
+          if (tileIsWall(level, gx, gy)) {
+            ok = false;
+            break;
+          }
+        }
+        if (!ok) break;
+      }
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 순찰 구간 근처에서, **BRUTE 가 선 칸과 맞닿아 있으면서 BRUTE 는 못 들어가는**
+ * 바닥 칸을 찾는다. 그 칸이 곧 도피로의 입구다.
+ */
+function findRefuge(
+  level: LevelDef,
+  path: readonly { tx: number; ty: number }[],
+): { tx: number; ty: number } | null {
+  const h = level.tiles.length;
+  const w = level.tiles[0]!.length;
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      if (tileIsWall(level, tx, ty)) continue;
+      const near = path.some(
+        (p) =>
+          Math.abs(p.tx - tx) <= REFUGE_SEARCH_RADIUS &&
+          Math.abs(p.ty - ty) <= REFUGE_SEARCH_RADIUS,
+      );
+      if (!near) continue;
+      if (bruteCanStand(level, tx, ty)) continue;
+      const touchesBruteSpace =
+        bruteCanStand(level, tx + 1, ty) ||
+        bruteCanStand(level, tx - 1, ty) ||
+        bruteCanStand(level, tx, ty + 1) ||
+        bruteCanStand(level, tx, ty - 1);
+      if (touchesBruteSpace) return { tx, ty };
+    }
+  }
+  return null;
+}
 
 const SOLUTIONS: Solution[] = [
   S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13, S14, S15,
@@ -584,14 +699,41 @@ describe('Solvability: 15개 스테이지 전부 par 이내로 클리어 가능�
     assert.ok(res.ghostsUsed <= S6_ALT.level.par);
     assert.equal(res.ghostsUsed, S6_ALT.roles.length - 1);
     // "빠른 길"이라는 말이 성립하려면 실제로 더 빨리 도착해야 한다.
-    // 두 경로를 기다림 없이 굴려 게이트 앞(20,5)에 닿는 틱을 재 비교한다.
-    const grateTicks = ticksToGateFront(s6LiveGrate(tiles(19)));
-    const southTicks = ticksToGateFront(s6LiveSouth(tiles(29)));
+    // 두 경로에 **같은 출발 지연**을 주고 게이트 앞(20,5)에 닿는 틱을 재 비교한다.
+    // 지연이 같으므로 차이는 순수한 경로 길이다. 0 이 아닌 이유는 사냥개 때문이다 —
+    // 격자로 곧장 뛰어들면 순찰과 정면으로 만나 잡힌다(그래서 여기서 재는 값은
+    // "경비를 피해 출발했을 때" 두 길의 소요다).
+    const S6_MEASURE_DELAY = 130;
+    const grateTicks = ticksToGateFront(s6LiveGrate(tiles(19) + S6_MEASURE_DELAY));
+    const southTicks = ticksToGateFront(s6LiveSouth(tiles(29) + S6_MEASURE_DELAY));
     assert.ok(grateTicks > 0 && southTicks > 0, '두 경로 모두 게이트 앞에 닿아야 한다');
     assert.ok(
       grateTicks < southTicks,
       `격자 경로(${grateTicks}틱)가 우회로(${southTicks}틱)보다 빠르지 않다 — 트레이드오프가 없는 설계다`,
     );
+  });
+
+  it('BRUTE 를 둔 방마다 40px 가 못 들어가는 피난 칸이 붙어 있다', () => {
+    let staged = 0;
+    for (const level of STAGES) {
+      const brutes = (level.guards ?? []).filter((g) => g.kind === 'BRUTE');
+      if (brutes.length === 0) continue;
+      staged++;
+      for (const g of brutes) {
+        for (const p of g.path) {
+          assert.ok(
+            bruteCanStand(level, p.tx, p.ty),
+            `${level.id}: BRUTE 순찰 지점 (${p.tx},${p.ty}) 에 40px 가 서지 못한다 — 스폰부터 벽에 낀다`,
+          );
+        }
+        const refuge = findRefuge(level, g.path);
+        assert.ok(
+          refuge !== null,
+          `${level.id}: BRUTE 순찰 구간 옆에 좁은 칸이 없다 — 이 배치는 그냥 느린 경비다`,
+        );
+      }
+    }
+    assert.ok(staged >= 4, `BRUTE 를 쓴 스테이지가 ${staged}개뿐이다`);
   });
 
   it('모든 스테이지가 4바디(잔상 3) 상한 안에 있다', () => {
