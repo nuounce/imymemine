@@ -12,6 +12,7 @@
  */
 
 import { STAGES } from '../src/game/levels';
+import { IN_FLASH } from '../src/sim/constants';
 import type { LevelDef, Tape } from '../src/sim/types';
 import { D, E, L, O, R, RUN, U, seg, tape, tiles, type Seg } from './tapes';
 
@@ -207,7 +208,8 @@ const S6: Solution = {
   level: STAGES[5]!,
   roles: [
     'MY: 남쪽 발판(1,10) — 금고 채널의 절반',
-    `ME: 격자를 밟고 지름길로 버튼(11,7) → ${S6_PRESS}틱에 누른다. 그 소리에 사냥개가 물고 끝내 이 몸을 덮치지만, 버튼은 이미 눌렸다 — 그게 미끼값이다`,
+    // 실측: 이 루프의 개는 INVESTIGATE 까지만 가고 CHASE 에 한 번도 들어가지 않는다.
+    `ME: 격자를 밟고 지름길로 버튼(11,7) → ${S6_PRESS}틱에 누른다. 그 소리에 사냥개가 수색을 나와 2.73타일까지 붙지만 추격에는 들어가지 않고 이 몸은 잡히지 않는다 — 미끼값은 체포가 아니라 개를 서쪽 수색에 붙들어 두는 것이다`,
     'I: 값을 치르지 않는 쪽 — 남쪽 우회로로 160틱을 더 걷고, 개가 서쪽에 붙어 있는 동안 조용히 게이트 앞에 선다',
   ],
   loops: [S6_PLATE, s6BtnGrate(S6_PRESS), s6LiveSouth(S6_ARRIVE)],
@@ -267,21 +269,34 @@ const S8: Solution = {
 };
 
 // ── 9. THE ORDER ──────────────────────────────────────────────────────────
+const S9_START = 40;
+/** 문줄 y5 의 순찰을 흘려보내는 두 박자. */
+const S9_W1 = 224;
+const S9_W2 = 16;
+/** ME 가 눈뽕을 터뜨리는 틱. */
+const S9_FLASH = 620;
 const S9: Solution = {
   level: STAGES[8]!,
   roles: [
     'MY: 서쪽 발판(2,11) — 벽장 B 의 문(12,4)을 붙잡는다',
-    'ME: 동쪽 발판(21,11) — 벽장 C 의 문(19,4)을 붙잡는다. 두 발판은 지도 양끝이라 한 몸으로는 못 겹친다',
-    'I: 문줄(y5)을 오가는 SENTRY 를 두 번 흘려보내며 0 → 1 → 2 를 누르고, 금고문 앞 WATCHER 의 경보보다 먼저 안으로 → loot → escape',
+    `ME: 남쪽 길에서 눈뽕(14,11)을 주워 동쪽 발판(21,11)에 선다 — 벽장 C 의 문(19,4)을 붙잡되, ` +
+      `순찰이 저를 잡으러 내려오는 ${S9_FLASH}틱에 그것을 터뜨려 간수와 금고문 앞 감시자를 함께 150틱 재운다. ` +
+      '두 발판은 지도 양끝이라 한 몸으로는 못 겹친다',
+    'I: 눈이 먼 문줄(y5)을 건너며 0 → 1 → 2 를 누르고, 경보가 울리기 전에 금고 안으로 → loot → escape',
   ],
   loops: [
     tape([seg(D, tiles(5)), seg(O, 4)]),
-    tape([seg(D, tiles(5)), seg(R, tiles(19)), seg(O, 4)]),
     tape([
+      seg(D, tiles(5)), seg(R, tiles(19)),
+      seg(O, S9_FLASH - tiles(24)),
+      seg(IN_FLASH, 1), seg(O, 4),
+    ]),
+    tape([
+      seg(O, S9_START),
       seg(R, tiles(3)), seg(U, tiles(3)), seg(E, 1), seg(O, 1), // order 0 (5,3)
-      seg(D, tiles(2)), seg(O, 240), // 순찰이 동쪽으로 지나갈 때까지 벽장 앞에서 죽는다
+      seg(D, tiles(2)), seg(O, S9_W1), // 순찰이 동쪽으로 지나갈 때까지 벽장 앞에서 죽는다
       seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 1 (12,3)
-      seg(D, tiles(2)), seg(O, 80),
+      seg(D, tiles(2)), seg(O, S9_W2),
       seg(R, tiles(7)), seg(U, tiles(2)), seg(E, 1), seg(O, 1), // order 2 (19,3)
       seg(D, tiles(6)), seg(R, tiles(4)), seg(R, tiles(3)), // 금고문(23,9) 통과
       seg(U, tiles(2)), seg(D, tiles(4)),
@@ -293,19 +308,23 @@ const S9: Solution = {
 const S10_D_BUTTON = 20;
 const S10_D_LIVE = 40;
 const S10_PRESS = S10_D_LIVE + tiles(17) + 80;
+/** ME 가 버튼 앞(17,2)에 올라선 다음 틱 = 이 스테이지의 눈뽕 사용 시각. */
+const S10_FLASH = S10_D_BUTTON + tiles(18) + 1;
 const S10: Solution = {
   level: STAGES[9]!,
   roles: [
     'MY: 서쪽 발판(2,8) — 금고 채널의 절반. 레이저를 건널 필요가 없는 자리다',
-    `ME: ${S10_D_BUTTON}틱 늦게 출발해 레이저가 꺼진 위상에 복도를 건너고, ${S10_PRESS}틱에 버튼(17,2)`,
-    `I: ${S10_D_LIVE}틱 늦게 출발 — 나만의 통과 위상으로 복도를 건너 게이트 앞에 선다`,
+    `ME: ${S10_D_BUTTON}틱 늦게 출발해 레이저가 꺼진 위상에 복도를 건너고, 올라오는 길(17,3)에서 눈뽕을 줍는다. ` +
+      `버튼 앞에 서는 ${S10_FLASH}틱에 그것을 터뜨려 바로 아래(17,5)의 감시자를 150틱 재우고, ${S10_PRESS}틱에 버튼(17,2)`,
+    `I: ${S10_D_LIVE}틱 늦게 출발 — 나만의 통과 위상으로 복도를 건너, 눈이 먼 감시자 옆에서 게이트가 열리기를 기다린다`,
   ],
   loops: [
     tape([seg(L, tiles(1)), seg(D, tiles(4)), seg(O, 4)]),
     tape([
       seg(O, S10_D_BUTTON),
       seg(D, tiles(1)), seg(R, tiles(14)), seg(U, tiles(3)),
-      seg(O, S10_PRESS - S10_D_BUTTON - tiles(18)),
+      seg(IN_FLASH, 1),
+      seg(O, S10_PRESS - S10_FLASH),
       seg(E, 1), seg(O, 4),
     ]),
     tape([
@@ -321,10 +340,13 @@ const S10: Solution = {
 const S11_DELAY = 250;
 const S11_A = S11_DELAY + 200; // 벽장 A 의 문이 열리는 틱
 const S11_B = S11_DELAY + 445; // 벽장 B 의 문이 열리는 틱
+/** MY 가 눈뽕을 터뜨리는 틱 — 조작 몸이 금고문으로 붙는 순간 감시자를 재운다. */
+const S11_FLASH = 1020;
 const S11: Solution = {
   level: STAGES[10]!,
   roles: [
-    `MY: 남동쪽 버튼(24,11) — ${S11_A}틱에 벽장 A 의 문(6,4)을 90틱 연다`,
+    `MY: 오는 길에 눈뽕(18,11)을 줍고 남동쪽 버튼(24,11) — ${S11_A}틱에 벽장 A 의 문(6,4)을 90틱 연다. ` +
+      `그리고 그 자리에 남아 ${S11_FLASH}틱에 눈뽕을 터뜨려 금고문 앞 감시자를 재운다`,
     `ME: 서쪽 버튼(2,5) — ${S11_B}틱에 벽장 B 의 문(15,4)을 90틱 연다`,
     'MINE: 발판(1,11) — 탈출 게이트 채널의 나머지 절반',
     'I: 0(10,6) → 열린 A 에서 1 → 열린 B 에서 2 → 사냥개가 북쪽으로 올라간 창을 기다렸다가 금고문 → loot → escape',
@@ -332,7 +354,9 @@ const S11: Solution = {
   loops: [
     tape([
       seg(D, tiles(5)), seg(R, tiles(22)),
-      seg(O, S11_A - tiles(27)), seg(E, 1), seg(O, 4),
+      seg(O, S11_A - tiles(27)), seg(E, 1),
+      seg(O, S11_FLASH - S11_A - 1),
+      seg(IN_FLASH, 1), seg(O, 4),
     ]),
     tape([seg(U, tiles(1)), seg(O, S11_B - tiles(1)), seg(E, 1), seg(O, 4)]),
     tape([seg(D, tiles(5)), seg(L, tiles(1)), seg(O, 4)]),

@@ -14,9 +14,10 @@
  * "여유가 5% 미만" 같은 난이도 판정은 **경고 출력**이다. 빡빡한 것은 고장이 아니라
  * 판단 대상이고, 레벨을 손볼 때마다 테스트가 깨지면 아무도 안 읽게 되기 때문이다.
  *
- * 눈뽕 미배치도 같은 이유로 경고다 — 아이템은 동작하지만(`flash.test.ts`)
- * 어느 스테이지에도 놓이지 않았다. 게임은 깨지지 않으므로 실패가 아니고,
- * 매 실행 경고로 남겨 잊히지 않게 한다.
+ * 눈뽕은 예외로 **실패**다. 한때는 배치가 0개라 경고로 흘렸지만, 지금은 3막의 세
+ * 스테이지에 하나씩 놓여 있고 정답 경로에서 잔상이 그것을 터뜨린다. 그러니 여기서
+ * 묻는 것은 "놓였는가"가 아니라 **"놓인 것이 정답에서 실제로 쓰이는가"** 이며,
+ * 그게 무너지면 아이템이 다시 장식으로 돌아간 것이므로 고장으로 친다.
  */
 
 import assert from 'node:assert/strict';
@@ -26,7 +27,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { STAGES } from '../src/game/levels';
-import { GUARD_KINDS, MAX_TICKS, TILE, TILE_SUB } from '../src/sim/constants';
+import { GUARD_KINDS, IN_FLASH, MAX_TICKS, TILE, TILE_SUB } from '../src/sim/constants';
 import type { GuardKind, LevelDef, SimOutcome, Tape } from '../src/sim/types';
 import { createWorld, stepWorld, type GhostSpec } from '../src/sim/world';
 import { S6_ALT, SOLUTIONS, type Solution } from './solutions';
@@ -60,6 +61,8 @@ interface Measured {
   carryingLoot: boolean;
   /** 클리어한 루프 시점에 확정돼 있던 잔상들. 관용 폭 측정에 쓴다. */
   ghosts: GhostSpec[];
+  /** 클리어하는 루프에서 경비가 눈이 멀어 있던 틱 수 (눈뽕이 실제로 터졌는가). */
+  dazedTicks: number;
 }
 
 /**
@@ -75,9 +78,11 @@ function measure(level: LevelDef, loops: readonly Uint16Array[]): Measured {
     const t = loops[i]!;
     const sim = createWorld(level, ghosts.slice());
     let used = 0;
+    let dazedTicks = 0;
     while (used < t.length && sim.outcome === 'RUNNING') {
       stepWorld(sim, t[used]!);
       used++;
+      if (sim.guards.some((g) => g.dazed > 0)) dazedTicks++;
     }
     loopTicks.push(used);
 
@@ -90,6 +95,7 @@ function measure(level: LevelDef, loops: readonly Uint16Array[]): Measured {
         alerts: sim.alerts,
         carryingLoot: sim.bodies[0]!.carryingLoot,
         ghosts,
+        dazedTicks,
       };
     }
     ghosts.push({ tape: t.slice(0, used), corpse: sim.outcome === 'CAPTURED' });
@@ -103,6 +109,7 @@ function measure(level: LevelDef, loops: readonly Uint16Array[]): Measured {
         alerts: sim.alerts,
         carryingLoot: sim.bodies[0]!.carryingLoot,
         ghosts,
+        dazedTicks,
       };
     }
   }
@@ -316,22 +323,22 @@ describe('B. 경비 4종과 눈뽕이 실제로 배치되어 있는가', () => {
     }
   });
 
-  it('눈뽕(flashes) 배치 — 없으면 경고 (아이템은 동작하지만 쓸 데가 없다)', () => {
+  it('눈뽕(flashes)이 배치돼 있고, 바닥 위이며, 한 스테이지에 하나씩이다', () => {
     const placed = STAGES.filter((l) => (l.flashes ?? []).length > 0);
-    if (placed.length === 0) {
-      console.warn(
-        '\n  [경고] 눈뽕(flashes)이 배치된 스테이지가 0개다.\n' +
-          '         시뮬·테이프·잔상 재생까지 구현돼 있으나(tests/flash.test.ts)\n' +
-          '         levels.ts 의 어느 스테이지도 `flashes` 를 정의하지 않아 플레이 중에는 등장하지 않는다.',
-      );
-    } else {
-      console.log(
-        `  [OK] 눈뽕 배치 스테이지: ` +
-          placed.map((l) => `${l.id}(${(l.flashes ?? []).length}개)`).join(', '),
-      );
-    }
-    // 배치 여부와 무관하게, 배치된 것이 있다면 바닥 타일 위여야 한다.
+    console.log(
+      `  [정보] 눈뽕 배치 스테이지: ` +
+        placed.map((l) => `${l.id}(${(l.flashes ?? []).length}개)`).join(', '),
+    );
+    assert.ok(
+      placed.length >= 3,
+      `눈뽕이 ${placed.length}개 스테이지에만 있다 — 시뮬은 되는데 플레이 중에 등장하지 않는 아이템이 된다`,
+    );
     for (const level of placed) {
+      assert.equal(
+        (level.flashes ?? []).length,
+        1,
+        `${level.id}: 한 스테이지에 눈뽕이 둘 이상이다 — 모든 퍼즐이 "눈뽕으로 밀기"가 된다`,
+      );
       for (const f of level.flashes ?? []) {
         assert.notEqual(
           level.tiles[f.ty]![f.tx],
@@ -340,6 +347,54 @@ describe('B. 경비 4종과 눈뽕이 실제로 배치되어 있는가', () => {
         );
       }
     }
+    // 1~2막은 코어 루프와 경비 유형을 배우는 구간이다. 아이템이 끼면 산만해진다.
+    const ACT3_FROM = 8; // 09_ME 부터
+    for (const level of placed) {
+      assert.ok(
+        STAGES.indexOf(level) >= ACT3_FROM,
+        `${level.id}: 3막(09_ME) 이전에 눈뽕이 놓였다`,
+      );
+    }
+  });
+
+  /**
+   * 배치만으로는 부족하다. 이 아이템의 설계 의도는 **"과거의 내가 정확한 순간에
+   * 터뜨려 주고 지금의 내가 그 틈으로 지나간다"** 이므로, 정답 경로에서
+   *   (1) 눈뽕 비트를 실은 것은 **잔상의 테이프**여야 하고 (조작 몸의 만능 탈출 버튼이 아니다)
+   *   (2) 그 결과 클리어하는 루프에서 실제로 **눈이 먼 경비가 생겨야** 한다
+   * 둘 다 실측으로 확인한다.
+   */
+  it('배치된 눈뽕은 정답 경로에서 잔상이 터뜨린다 — 조작 몸이 쓰는 게 아니다', () => {
+    const report: string[] = [];
+    for (const { sol, m } of RESULTS) {
+      if ((sol.level.flashes ?? []).length === 0) continue;
+      const firing: number[] = [];
+      sol.loops.forEach((t, i) => {
+        for (const mask of t) {
+          if ((mask & IN_FLASH) !== 0) {
+            firing.push(i);
+            break;
+          }
+        }
+      });
+      assert.ok(
+        firing.length > 0,
+        `${sol.level.id}: 눈뽕을 놓아 놓고 정답 테이프 어디에서도 쓰지 않는다`,
+      );
+      assert.ok(
+        !firing.includes(m.ghostsUsed),
+        `${sol.level.id}: 조작 몸(마지막 테이프)이 눈뽕을 쓴다 — 만능 탈출 버튼이 되면 설계가 죽는다`,
+      );
+      assert.ok(
+        m.dazedTicks > 0,
+        `${sol.level.id}: 잔상이 눈뽕을 터뜨렸는데 클리어 루프에서 눈이 먼 경비가 없다 — 아무 일도 안 하는 연출이다`,
+      );
+      report.push(
+        `    ${sol.level.id.padEnd(16)} 잔상 ${firing.join(',')}번 루프가 사용 · ` +
+          `클리어 루프에서 경비 실명 ${m.dazedTicks}틱`,
+      );
+    }
+    console.log('\n  눈뽕 사용 실측:\n' + report.join('\n'));
   });
 
   it('WATCHER 가 단독으로 서 있는 스테이지가 없다 (혼자면 무해하다)', () => {
@@ -606,8 +661,9 @@ const COPIED_DECLS = [
   'S2_PRESS', 'S5_DECOY', 'S5_START', 'S5_BUTTON_TICK',
   'S6_PRESS', 'S6_ARRIVE', 'S6_PLATE', 's6BtnGrate', 's6BtnSouth',
   'S6_TAIL', 's6LiveGrate', 's6LiveSouth',
-  'S10_D_BUTTON', 'S10_D_LIVE', 'S10_PRESS',
-  'S11_DELAY', 'S11_A', 'S11_B',
+  'S9_START', 'S9_W1', 'S9_W2', 'S9_FLASH',
+  'S10_D_BUTTON', 'S10_D_LIVE', 'S10_PRESS', 'S10_FLASH',
+  'S11_DELAY', 'S11_A', 'S11_B', 'S11_FLASH',
   'S12_BUTTON_TICK', 'S12_DECOY',
   'S13_CLOSE',
   'S14_EYE', 'S14_DOOR', 'S14_W1', 'S14_W2',

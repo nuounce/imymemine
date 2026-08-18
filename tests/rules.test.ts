@@ -5,8 +5,9 @@
  * **규칙이 경계에서도 명세대로 동작하는가**를 묻는다. 전용 미니 레벨을 써서
  * 각 규칙을 다른 규칙과 섞이지 않게 격리한다.
  *
- * 마지막 블록(§9)은 반대 방향의 질문이다 — "잔상 없이는 클리어할 수 없다"는
- * 게임의 전제가 15개 스테이지에서 실제로 성립하는지를 검증한다.
+ * 마지막 두 블록(§9, §9-2)은 반대 방향의 질문이다 — "잔상 없이는 클리어할 수 없다"는
+ * 게임의 전제가 15개 스테이지에서 실제로 성립하는지, 그리고 3막에 놓인 눈뽕이
+ * 그 전제를 우회하는 뒷문이 되지 않는지를 검증한다.
  */
 
 import assert from 'node:assert/strict';
@@ -29,6 +30,7 @@ import {
   CRATE_SUB,
   DETECT_MAX,
   DETECT_SUSPICIOUS,
+  IN_FLASH,
   LOOP_TRANSITION_TICKS,
   MAX_AFTERIMAGES,
   MAX_TICKS,
@@ -733,6 +735,49 @@ describe('설계 전제: 어떤 스테이지도 잔상 0개로는 클리어할 �
         `${level.id}: 잔상 0개로 ${solo.tape.length}틱 만에 클리어된다 ` +
           `(구조 증명: ${proof.proved ? '성공했는데도' : `실패 — ${proof.reason}`}). 설계 전제가 무너진다.`,
       );
+    });
+  }
+});
+
+/**
+ * §9-2 눈뽕이 열어 주는 뒷문은 없는가.
+ *
+ * 3막의 세 스테이지에는 1회용 눈뽕이 하나씩 놓여 있고, 정답에서는 **잔상이** 그것을
+ * 터뜨린다(qa.test.ts 가 그 사실을 못 박는다). 그렇다면 반대편 질문이 남는다 —
+ * 조작 몸이 그것을 주워 **아무 틱에나** 터뜨리면 잔상 없이도 빠져나갈 수 있는가.
+ *
+ * `driveWaypoints` 는 이동 입력만 만들므로, 거기서 나온 단독 공략 테이프의 한 틱에
+ * `IN_FLASH` 비트를 얹어 다시 돌린다. 눈뽕 비트는 몸을 움직이지 않으므로 **경로는
+ * 그대로이고 터뜨리는 시각만 달라진다** — 즉 "언제 터뜨려야 통하는가"를 전수로 훑는 것이다.
+ * 하나라도 통하면 이 아이템은 만능 탈출 버튼이다.
+ */
+describe('§9-2 눈뽕을 아무 시각에 터뜨려도 잔상 0개로는 클리어되지 않는다', () => {
+  /** 이 간격으로 사용 시각을 옮겨 가며 전부 시도한다. 눈뽕 실명은 150틱이라 10틱 격자면 촘촘하다. */
+  const FIRE_STRIDE = 10;
+
+  const staged = STAGES.filter((l) => (l.flashes ?? []).length > 0);
+
+  it('눈뽕이 놓인 스테이지가 실제로 있다 (없으면 이 검사가 공회전한다)', () => {
+    assert.ok(staged.length >= 3, `눈뽕 배치 스테이지가 ${staged.length}개뿐이다`);
+  });
+
+  for (const level of staged) {
+    it(`${level.id} — 사용 시각을 전부 훑어도 단독 클리어가 열리지 않는다`, () => {
+      const wps = SOLO_ATTEMPTS[level.id]!;
+      const base = driveWaypoints(level, wps).tape;
+      let tried = 0;
+      for (let t = 0; t < base.length; t += FIRE_STRIDE) {
+        const withFlash = Uint16Array.from(base);
+        withFlash[t] = withFlash[t]! | IN_FLASH;
+        tried++;
+        const replay = playSolution(level, [withFlash]);
+        assert.notEqual(
+          replay.outcome,
+          'CLEARED',
+          `${level.id}: ${t}틱에 눈뽕을 터뜨리면 잔상 0개로 클리어된다 — 아이템이 뒷문이 됐다`,
+        );
+      }
+      assert.ok(tried >= 20, `${level.id}: 시도가 ${tried}회뿐이다 — 검사가 너무 얕다`);
     });
   }
 });
