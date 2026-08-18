@@ -386,8 +386,18 @@ export function createTouch(opts: TouchOptions): TouchInput {
     release(e.pointerId, true);
   };
 
-  /** 창이 포커스를 잃으면 손가락이 붙잡고 있던 상태가 남아 계속 걷는다. */
-  const onBlur = (): void => {
+  /**
+   * 현재 포인터를 전부 놓는다. Safari 가 페이지를 보관하거나 제어 센터로 나갈 때
+   * pointercancel 없이 캡처만 남는 경우에도 다음 손가락이 새 입력으로 시작해야 한다.
+   */
+  const clearHeldPointers = (): void => {
+    for (const pointerId of roles.keys()) {
+      try {
+        cv.releasePointerCapture(pointerId);
+      } catch {
+        // 이미 브라우저가 캡처를 반납했으면 할 일이 없다.
+      }
+    }
     roles.clear();
     downCount.clear();
     stickId = -1;
@@ -397,11 +407,25 @@ export function createTouch(opts: TouchOptions): TouchInput {
     baseY = STICK_HOME_Y;
   };
 
+  /** 포커스/페이지 경계를 넘는 입력은 엣지와 탭까지 함께 버린다. */
+  const resetTransient = (): void => {
+    clearHeldPointers();
+    pressed.clear();
+    taps.length = 0;
+  };
+
+  /** 창이 포커스를 잃으면 손가락이 붙잡고 있던 상태가 남아 계속 걷는다. */
+  const onBlur = (): void => resetTransient();
+  /** Safari back/forward cache 에서 돌아와도 이전 포인터 캡처를 재사용하지 않는다. */
+  const onPageLifecycle = (): void => resetTransient();
+
   cv.addEventListener('pointerdown', onDown);
   cv.addEventListener('pointermove', onMove);
   cv.addEventListener('pointerup', onUp);
   cv.addEventListener('pointercancel', onCancel);
   window.addEventListener('blur', onBlur);
+  window.addEventListener('pagehide', onPageLifecycle);
+  window.addEventListener('pageshow', onPageLifecycle);
 
   return {
     mask(): InputMask {
@@ -432,9 +456,9 @@ export function createTouch(opts: TouchOptions): TouchInput {
       cv.removeEventListener('pointerup', onUp);
       cv.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('blur', onBlur);
-      onBlur();
-      pressed.clear();
-      taps.length = 0;
+      window.removeEventListener('pagehide', onPageLifecycle);
+      window.removeEventListener('pageshow', onPageLifecycle);
+      resetTransient();
     },
 
     isTouch(): boolean {
@@ -446,7 +470,7 @@ export function createTouch(opts: TouchOptions): TouchInput {
       context = c;
       // 묶음이 바뀌면 붙잡고 있던 패드는 의미가 없다. 손가락 상태만 비우고
       // 엣지 큐는 남긴다 — PICK 을 여는 Q 엣지가 여기서 사라지면 안 된다.
-      onBlur();
+      clearHeldPointers();
     },
 
     consumeTaps(): TouchTap[] {

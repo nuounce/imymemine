@@ -2,8 +2,9 @@
  * I.MY.ME.MINE — 7칸 인트로 **만화**.
  *
  * 전면 슬라이드쇼가 아니라 **만화 페이지**다. 페이지 위에 칸이 하나씩 잉크가 번지듯
- * 그려지고, 페이지가 다 차면 가로로 넘어간다. 칸마다 샷 사이즈가 다르고(와이드/미디엄/
- * 익스트림 클로즈업), 명암은 하프톤 스크린톤으로 만든다 — 만화의 질감은 거기서 나온다.
+ * 그려지고, 페이지가 다 차면 다음 입력에서 가로로 넘어간다. 칸마다 샷 사이즈가 다르고
+ * (와이드/미디엄/익스트림 클로즈업), 명암은 하프톤 스크린톤으로 만든다 — 만화의 질감은
+ * 거기서 나온다.
  *
  * 스토리의 회수: 칸 2 의 "넷씩 묶인 금"이 칸 7 에서 네 사람 뒤로 다시 떠오른다.
  * 두 칸은 **같은 시드**로 같은 획을 그린다(TALLY_SEED) — 그래야 회수로 읽힌다.
@@ -28,7 +29,7 @@ import { CANVAS_H, CANVAS_W } from '../sim/constants';
 
 // ── 타이밍 ─────────────────────────────────────────────────────────────────
 
-/** 칸당 2.2초. 7칸 = 924틱 ≈ 15.4초. */
+/** 칸당 최대 2.2초의 연출. 연출이 끝나면 입력이 올 때까지 그 칸에 머문다. */
 export const CUT_TICKS = 132;
 export const CUT_COUNT = 7;
 export const INTRO_TICKS = CUT_TICKS * CUT_COUNT;
@@ -49,11 +50,26 @@ export function createIntro(): IntroState {
   return { tick: 0, done: false };
 }
 
-/** 1틱 진행. `done` 이 되면 호출부가 타이틀로 넘긴다. */
+/**
+ * 현재 칸의 연출만 1틱 진행한다. 칸이 다 그려지면 자동으로 다음 칸에 가지 않는다 —
+ * 이야기를 읽는 속도는 플레이어가 정하고, `advanceIntro` 가 다음 칸을 연다.
+ */
 export function tickIntro(s: IntroState): void {
   if (s.done) return;
-  s.tick++;
-  if (s.tick >= INTRO_TICKS) s.done = true;
+  const cut = Math.min(CUT_COUNT - 1, Math.floor(s.tick / CUT_TICKS));
+  const holdAt = Math.min(INTRO_TICKS - 1, (cut + 1) * CUT_TICKS - 1);
+  if (s.tick < holdAt) s.tick++;
+}
+
+/** 아무 키/탭 한 번 = 다음 칸. 마지막 칸에서는 인트로를 끝낸다. */
+export function advanceIntro(s: IntroState): void {
+  if (s.done) return;
+  const cut = Math.min(CUT_COUNT - 1, Math.floor(s.tick / CUT_TICKS));
+  if (cut === CUT_COUNT - 1) {
+    s.done = true;
+    return;
+  }
+  s.tick = (cut + 1) * CUT_TICKS;
 }
 
 // ── 최초 1회 재생 플래그 ───────────────────────────────────────────────────
@@ -1491,8 +1507,8 @@ function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void
   }
 }
 
-/** 스캔라인 + 진행 표시 + 스킵 안내. 페이지와 무관하게 화면에 고정된다. */
-function drawOverlay(g: CanvasRenderingContext2D, tick: number): void {
+/** 스캔라인 + 진행 표시 + 수동 진행 안내. 페이지와 무관하게 화면에 고정된다. */
+function drawOverlay(g: CanvasRenderingContext2D, tick: number, touch: boolean): void {
   g.save();
   g.fillStyle = 'rgba(0,0,0,0.1)';
   for (let y = 0; y < CANVAS_H; y += 4) g.fillRect(0, y, CANVAS_W, 1);
@@ -1513,7 +1529,10 @@ function drawOverlay(g: CanvasRenderingContext2D, tick: number): void {
   g.font = font(10);
   g.textAlign = 'right';
   g.textBaseline = 'alphabetic';
-  g.fillText('PRESS ANY KEY TO SKIP', CANVAS_W - 22, CANVAS_H - 10);
+  const last = cut === CUT_COUNT - 1;
+  const direction = last ? 'TO START' : 'FOR NEXT';
+  const prompt = touch ? `TAP ${direction}` : `PRESS ANY KEY ${direction}`;
+  g.fillText(prompt, CANVAS_W - 22, CANVAS_H - 10);
   g.restore();
 }
 
@@ -1524,7 +1543,7 @@ function drawOverlay(g: CanvasRenderingContext2D, tick: number): void {
  * **가로 와이프**가 걸린다. 나가는 페이지는 마지막 틱 상태로 얼려 그린다 — 나가는
  * 화면이 계속 움직이면 시선이 갈라진다.
  */
-export function drawIntro(g: CanvasRenderingContext2D, s: IntroState): void {
+export function drawIntro(g: CanvasRenderingContext2D, s: IntroState, touch = false): void {
   const tick = Math.min(s.tick, INTRO_TICKS - 1);
   const cut = Math.min(CUT_COUNT - 1, Math.floor(tick / CUT_TICKS));
   const page = PAGE_OF[cut]!;
@@ -1558,5 +1577,5 @@ export function drawIntro(g: CanvasRenderingContext2D, s: IntroState): void {
     drawPage(g, page, tick);
   }
 
-  drawOverlay(g, tick);
+  drawOverlay(g, tick, touch);
 }

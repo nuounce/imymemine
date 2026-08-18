@@ -67,6 +67,7 @@ import {
   type InterludeState,
 } from './render/interlude';
 import {
+  advanceIntro,
   createIntro,
   drawIntro,
   hasSeenIntro,
@@ -230,6 +231,8 @@ function onResize(): void {
 
 window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', onResize);
+// Safari 가 back/forward cache 에서 문서를 복원하면 load/resize 없이 돌아올 수 있다.
+window.addEventListener('pageshow', onResize);
 // 모바일 브라우저는 주소창이 접힐 때 resize 가 아니라 이쪽만 쏘는 경우가 있다.
 window.visualViewport?.addEventListener('resize', onResize);
 onResize();
@@ -410,7 +413,7 @@ function backToTitle(): void {
 
 // ── 인트로 (7칸 만화) ──────────────────────────────────────────────────────
 // 시뮬과 완전히 분리돼 있다: SimState 를 만들지도 굴리지도 않고, 자체 틱만 센다.
-// 최초 1회만 자동 재생하고 그 뒤로는 타이틀에서 `S` 로만 다시 본다.
+// 최초 1회만 자동으로 열고 그 뒤로는 타이틀에서 `S` 로만 다시 본다.
 
 let intro: IntroState | null = null;
 /** 개발 모드에서 컷별 스크린샷을 찍기 위해 인트로 타이머를 세운다(§21.2 자동화 QA). */
@@ -433,6 +436,13 @@ function leaveIntro(): void {
   session.phase = 'TITLE';
   uiClock = 0;
   input.flush();
+}
+
+/** 아무 키/탭 한 번으로 다음 칸을 열고, 마지막 칸 뒤에서만 타이틀로 나간다. */
+function advanceIntroStory(): void {
+  if (intro === null) return;
+  advanceIntro(intro);
+  if (intro.done) leaveIntro();
 }
 
 // ── 막간 (막 사이 2칸 만화) ────────────────────────────────────────────────
@@ -495,15 +505,15 @@ function leaveInterlude(): void {
 }
 
 /**
- * 인트로 중에는 **아무 키나** 스킵이다(`Esc` 포함). 게임 입력 매핑을 거치지 않고
- * 원시 keydown 을 직접 본다 — 매핑되지 않은 키로도 빠져나올 수 있어야 하기 때문이다.
- * 여기서 `input.flush()`(leaveIntro 내부) 가 그 키의 메타 엣지를 지우므로,
- * 스킵에 쓴 Enter 가 곧바로 스테이지를 시작시키는 사고가 나지 않는다.
+ * 인트로 중에는 **아무 키나** 다음 칸이다(`Esc` 포함). 게임 입력 매핑을 거치지 않고
+ * 원시 keydown 을 직접 본다 — 매핑되지 않은 키로도 이야기를 넘길 수 있어야 한다.
+ * 마지막 칸에서 `input.flush()`(leaveIntro 내부) 가 그 키의 메타 엣지를 지우므로,
+ * 끝내는 데 쓴 Enter 가 곧바로 스테이지를 시작시키는 사고가 나지 않는다.
  */
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (session.phase === 'INTRO') {
-    leaveIntro();
+    advanceIntroStory();
     return;
   }
   // 막간도 같다 — 아무 키나 스킵. 여기서 페이즈를 옮기고 엣지를 비우므로
@@ -756,7 +766,7 @@ function handleTaps(): void {
     }
     switch (session.phase) {
       case 'INTRO':
-        leaveIntro();
+        advanceIntroStory();
         return; // 페이즈가 바뀌었다. 남은 탭이 새 화면의 버튼을 누르면 안 된다.
       case 'INTERLUDE':
         // 손가락에게도 "아무 곳이나" 스킵이어야 한다 — 막간에는 버튼이 없다.
@@ -894,7 +904,7 @@ function onRender(): void {
 
   switch (session.phase) {
     case 'INTRO':
-      if (intro !== null) drawIntro(g, intro);
+      if (intro !== null) drawIntro(g, intro, touchMode);
       break;
     case 'INTERLUDE':
       if (interlude !== null) drawInterlude(g, interlude, touchMode);
@@ -1014,14 +1024,6 @@ cv.addEventListener('pointerdown', (e) => {
     return;
   }
 
-  if (session.phase === 'INTRO') {
-    leaveIntro();
-    return;
-  }
-  if (session.phase === 'INTERLUDE') {
-    leaveInterlude();
-    return;
-  }
   if (session.phase === 'TITLE') {
     // 키보드 ENTER 경로와 같은 이유로, 마이크는 이 제스처 핸들러 안에서 연다.
     if (session.mode === 'LISTEN') mic.start();

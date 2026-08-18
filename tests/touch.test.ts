@@ -21,6 +21,7 @@ import { STAGES } from '../src/game/levels';
 import { createInput } from '../src/engine/input';
 import {
   clampKnob,
+  createTouch,
   mergeInput,
   PICK_PADS,
   quantizeStick,
@@ -48,6 +49,46 @@ import { createWorld, stepWorld } from '../src/sim/world';
 const MOVE_BITS = IN_UP | IN_DOWN | IN_LEFT | IN_RIGHT;
 /** 조이스틱이 만들 수 있는 비트의 전부. 이 밖의 비트가 섞이면 테이프가 오염된다. */
 const STICK_BITS = MOVE_BITS | IN_RUN;
+
+class FakeCanvas extends EventTarget {
+  readonly released: number[] = [];
+
+  getBoundingClientRect(): DOMRect {
+    return {
+      x: 0,
+      y: 0,
+      width: CANVAS_W,
+      height: CANVAS_H,
+      top: 0,
+      right: CANVAS_W,
+      bottom: CANVAS_H,
+      left: 0,
+      toJSON: () => ({}),
+    };
+  }
+
+  setPointerCapture(): void {}
+
+  releasePointerCapture(pointerId: number): void {
+    this.released.push(pointerId);
+  }
+}
+
+function pointer(
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  pointerId: number,
+  clientX: number,
+  clientY: number,
+): Event {
+  const e = new Event(type, { cancelable: true });
+  Object.defineProperties(e, {
+    pointerId: { value: pointerId },
+    pointerType: { value: 'touch' },
+    clientX: { value: clientX },
+    clientY: { value: clientY },
+  });
+  return e;
+}
 
 /** 마스크를 사람이 읽는 이름으로. 실패 메시지가 숫자면 원인 추적이 안 된다. */
 function names(m: InputMask): string {
@@ -148,6 +189,30 @@ describe('터치: 8방향 양자화', () => {
     assert.equal(TOUCH_TAN_SCALE, 1000);
     assert.equal(TOUCH_TAN_22_5, 414);
     assert.equal(Math.round(Math.tan(Math.PI / 8) * TOUCH_TAN_SCALE), TOUCH_TAN_22_5);
+  });
+});
+
+describe('터치: Safari 페이지 복귀', () => {
+  it('pageshow 에서 남은 포인터 캡처와 이동 상태를 버리고 새 입력을 받는다', () => {
+    const canvas = new FakeCanvas();
+    const touch = createTouch({ canvas: canvas as unknown as HTMLCanvasElement });
+    touch.setContext('PLAY');
+
+    canvas.dispatchEvent(pointer('pointerdown', 7, 120, 450));
+    canvas.dispatchEvent(pointer('pointermove', 7, 180, 450));
+    assert.notEqual(touch.mask() & MOVE_BITS, 0, '복귀 전에는 조이스틱 입력이 살아 있다');
+
+    window.dispatchEvent(new Event('pageshow'));
+
+    assert.equal(touch.mask(), 0, '복귀 직후에는 중단 전 입력이 남지 않는다');
+    assert.equal(touch.view().stickActive, false);
+    assert.deepEqual(canvas.released, [7]);
+
+    canvas.dispatchEvent(pointer('pointerdown', 8, 120, 450));
+    canvas.dispatchEvent(pointer('pointermove', 8, 60, 450));
+    assert.notEqual(touch.mask() & MOVE_BITS, 0, '복귀 후 새 조이스틱 입력은 즉시 받는다');
+
+    touch.destroy();
   });
 });
 
