@@ -21,6 +21,7 @@ import {
   BODY_SUB,
   MAX_AFTERIMAGES,
   MAX_TICKS,
+  SLOT_NAMES,
   SUBPIXEL,
   TICK_HZ,
   TILE_SUB,
@@ -61,8 +62,6 @@ export const GLOBAL_LINES = {
   plateOn: '밟고 있는 동안만 열려 있네.',
   plateStand: '내가 여기 계속 있으면... 문도 계속 열려 있는 거잖아.',
   plateCommit: 'R 누르면 되겠지. 여기다 나를 하나 두고 가는 거야.',
-  firstCommit: '...저게 나였어.',
-  ghostOnPlate: '쟤는 계속 밟고 있어. 지금 가야 해.',
   core: '가져왔어. 이제 나가면 돼.',
   // 아이템은 설명서를 띄우지 않고 손에 쥔 사람이 알아채는 걸로 한다.
   flashPicked: '섬광탄이네. 한 발짜리. ...F.',
@@ -71,9 +70,71 @@ export const GLOBAL_LINES = {
   suspicious: '...봤나?',
   chase: '들켰어!',
   timeLow: '시간이 없어.',
-  noSelves: '더 남길 나는 없어.',
-  captured: '괜찮아. 저 자리도 쓸 데가 있어.',
 } as const;
+
+// ── 막에 따라 갈리는 대사 (STORY.md §7) ────────────────────────────────────
+//
+// 막이 오를수록 **잔상을 부르는 말**이 바뀐다. 사물 → 3인칭 → 망설임 → 1인칭 복수.
+// 설명하지 않는다. 호칭만 바뀌고, 그 변화를 알아채는 것은 플레이어의 몫이다.
+//
+// 트리거도 막힘 단계도 그대로다 — 같은 상황에서 같은 id 가 한 번 나오고,
+// 고르는 **문구**만 막을 따라간다.
+
+/** 1막 ~ 4막. `ACT_COUNT` 는 슬롯 이름(I·MY·ME·MINE)의 수에서 나온다. */
+export const ACT_COUNT = SLOT_NAMES.length;
+
+/**
+ * 레벨 id 의 슬롯 토큰이 곧 막이다: `01_I` → `I` → 1막, `15_MINE_FINAL` → `MINE` → 4막.
+ * 스테이지 개수를 나눠 세지 않는다 — 스테이지가 늘어도 막은 id 가 말한다.
+ * 알 수 없는 id 는 1막으로 떨어뜨린다(대사가 사라지는 것보다 낫다).
+ */
+export function actOf(levelId: string): number {
+  const token = levelId.split('_')[1] ?? '';
+  const i = (SLOT_NAMES as readonly string[]).indexOf(token);
+  return i < 0 ? 1 : i + 1;
+}
+
+/**
+ * 막마다 갈리는 대사. 배열은 1막부터 4막 순서다.
+ *
+ * **`우리` 는 4막에만 있다.** 그 한 단어가 이 이야기의 도착점이라, 앞선 막에서
+ * 미리 쓰면 도착이 사라진다.
+ */
+export const ACT_LINES = {
+  firstCommit: [
+    '...저게 나였어.',
+    '쟤가 나 대신 서 있어.',
+    '쟤도... 나였지.',
+    '우리 중 하나가 저기 서 있어.',
+  ],
+  ghostOnPlate: [
+    '저거 계속 밟고 있어. 지금 가야 해.',
+    '쟤는 계속 밟고 있어. 지금 가야 해.',
+    '쟤가 버티고 있어. ...쟤도 난데. 지금 가야 해.',
+    '우리가 밟고 있어. 지금 가야 해.',
+  ],
+  noSelves: [
+    '더 남길 나는 없어.',
+    '저쪽의 나까지 다 썼어.',
+    '쟤도, 쟤도... 다 나였어. 더는 없어.',
+    '우리 전부야. 더는 없어.',
+  ],
+  captured: [
+    '괜찮아. 저 자리도 쓸 데가 있어.',
+    '괜찮아. 쟤도 쓸 데가 있어.',
+    '괜찮아. 쟤도... 나였는데.',
+    '괜찮아. 우리는 아직 남아 있어.',
+  ],
+} as const;
+
+export type ActLineId = keyof typeof ACT_LINES;
+
+/** 막 번호(1..4)로 대사 하나. 범위를 벗어나면 가장 가까운 막으로 눌러 담는다. */
+export function actLine(id: ActLineId, act: number): string {
+  const lines = ACT_LINES[id];
+  const i = Math.min(lines.length - 1, Math.max(0, Math.floor(act) - 1));
+  return lines[i] ?? lines[0];
+}
 
 export interface StageWhisper {
   /** 스테이지에 들어서자마자 한 번. */
@@ -338,10 +399,12 @@ function pickLine(s: Session, live: Body | null): Candidate | null {
   const sim = s.sim;
   const stage = STAGE_WHISPERS[s.level.id];
   const out: Candidate[] = [];
+  // 지금 몇 막인가. 잔상을 부르는 말이 여기서 갈린다 (STORY.md §7).
+  const act = actOf(s.level.id);
 
   // 급한 것부터 — 이 셋은 떠 있는 대사를 밀어낸다.
   if (sim.outcome === 'CAPTURED') {
-    out.push({ id: 'captured', text: GLOBAL_LINES.captured, urgent: true });
+    out.push({ id: 'captured', text: actLine('captured', act), urgent: true });
   }
   let chasing = false;
   let suspicious = false;
@@ -376,17 +439,17 @@ function pickLine(s: Session, live: Body | null): Candidate | null {
     break;
   }
   if (s.ghosts.length >= MAX_AFTERIMAGES) {
-    out.push({ id: 'noSelves', text: GLOBAL_LINES.noSelves, urgent: false });
+    out.push({ id: 'noSelves', text: actLine('noSelves', act), urgent: false });
   }
   if (s.ghosts.length >= 1) {
-    out.push({ id: 'firstCommit', text: GLOBAL_LINES.firstCommit, urgent: false });
+    out.push({ id: 'firstCommit', text: actLine('firstCommit', act), urgent: false });
   }
 
   // 잔상이 발판 위에서 멈춰 있다 = 지금이 지나갈 창이다.
   for (const b of sim.bodies) {
     if (b.isLive || !b.frozen) continue;
     if (!onPlate(sim, b)) continue;
-    out.push({ id: 'ghostOnPlate', text: GLOBAL_LINES.ghostOnPlate, urgent: false });
+    out.push({ id: 'ghostOnPlate', text: actLine('ghostOnPlate', act), urgent: false });
     break;
   }
 

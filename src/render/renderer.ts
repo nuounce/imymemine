@@ -32,6 +32,12 @@ import type {
 } from '../sim/types';
 import { drawTopFigure, STRIDE_PX, TOP_BUILD, topPose, topQuadReach } from './figure';
 import {
+  drawNoteDecals,
+  drawNoteOverlay,
+  drawNotePrompt,
+  updateNotes,
+} from './note';
+import {
   A_CONE_CCTV,
   A_CONE_CHASE,
   A_CONE_PATROL,
@@ -719,6 +725,10 @@ export function updateView(
 
   for (const r of view.rings) r.age++;
   view.rings = view.rings.filter((r) => r.age < r.life);
+
+  // 환경 단서(`note.ts`)도 렌더 전용 레이어다. `SimState` 를 읽기만 하므로
+  // 여기 끼워 넣어도 결정론은 그대로다 — 그 불변은 tests/notes.test.ts 가 지킨다.
+  updateNotes(s);
 }
 
 // ── 그리기 ─────────────────────────────────────────────────────────────────
@@ -747,6 +757,8 @@ export function drawWorld(
 
   // 바닥·벽·조명은 레벨마다 한 번 굽는다(격자선 없음, 시드 고정 얼룩·이음새 포함).
   drawBakedWorld(ctx, s);
+  // 단서는 바닥에 놓인 물건이다 — 장치·몸보다 아래, 구운 바닥보다 위.
+  drawNoteDecals(ctx, s, (x, y) => shadeAt(s, x, y));
   drawGates(ctx, s, view);
   drawDevices(ctx, s);
   drawCrates(ctx, s);
@@ -757,6 +769,8 @@ export function drawWorld(
   drawGuards(ctx, s, view);
   drawLive(ctx, s, view);
   drawRings(ctx, view);
+  // 키캡은 몸보다 위에 뜬다 — 잔상 뒤에 가려지면 안내가 안내로 기능하지 않는다.
+  drawNotePrompt(ctx, s);
 
   ctx.restore();
 
@@ -769,6 +783,9 @@ export function drawWorld(
   drawVignette(ctx);
   drawGrain(ctx, view.frame);
   drawFringe(ctx);
+  // 펼쳐 든 문서. 필름 질감 **위**에 얹어야 손에 든 종이로 읽힌다 —
+  // 그레인 아래에 두면 바닥에 그려진 그림과 구분되지 않는다.
+  drawNoteOverlay(ctx, s);
 
   if (view.flash > 0.001) {
     ctx.fillStyle = withAlpha(view.flashColor, view.flash * 0.35);

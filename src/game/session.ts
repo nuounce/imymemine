@@ -21,8 +21,17 @@ import { STAGES } from './levels';
 /**
  * `INTRO` 는 6컷 인트로 카툰 전용 페이즈다. 시뮬과 완전히 분리돼 있어
  * (`tickSession` 은 PLAY/TRANSITION 만 진행시킨다) 세션 상태를 건드리지 않는다.
+ * `INTERLUDE`(막 사이 2컷 만화)도 같다 — 그래서 막간이 흐르는 동안
+ * `elapsedTicks` 가 한 틱도 늘지 않는다(TIME_ATTACK 기록에 섞이지 않는다).
  */
-export type Phase = 'INTRO' | 'TITLE' | 'PLAY' | 'TRANSITION' | 'CLEAR' | 'ALLCLEAR';
+export type Phase =
+  | 'INTRO'
+  | 'TITLE'
+  | 'PLAY'
+  | 'TRANSITION'
+  | 'INTERLUDE'
+  | 'CLEAR'
+  | 'ALLCLEAR';
 
 /**
  * `EASY` — 마이크를 쓰지 않는다. 입력 마스크의 마이크 비트가 항상 0 이라
@@ -306,13 +315,83 @@ export function fullReset(s: Session): void {
 }
 
 export function nextStage(s: Session): void {
-  if (s.stageIndex + 1 >= STAGES.length) {
+  if (isFinalStage(s.stageIndex)) {
     // 마지막 스테이지를 넘긴 순간이 곧 런의 끝이다. STORY 는 기록을 남기지 않는다.
     if (s.playMode !== 'STORY') finishRun(s);
     s.phase = 'ALLCLEAR';
     return;
   }
   startStage(s, s.stageIndex + 1);
+}
+
+// ── 엔딩 (STORY.md §6) ─────────────────────────────────────────────────────
+//
+// 마지막 스테이지를 나온 뒤 무엇을 보는가는 **DEBT 하나**로 갈린다. 전체 초기화로
+// 지운 실수의 수가 곧 시설이 회수한 잔상의 수(수율)이기 때문이다 (STORY.md §2).
+//
+// 이 블록은 전부 **읽기 전용**이다. `Session` 도 `SimState` 도 한 비트 쓰지 않는다 —
+// 엔딩은 화면일 뿐이고, 화면이 상태를 만지면 결정론이 무너진다 (SPEC §4).
+
+/**
+ * `TOGETHER`    DEBT 0 — 아무것도 두고 오지 않았다. 넷이 함께 나간다.
+ * `LEFT_BEHIND` DEBT 1~2 — 나가지만 안쪽으로 회수반이 들어간다.
+ * `YIELD`       DEBT 3+ — 나갔다. 안에서 다음 배치가 깨어난다.
+ */
+export type EndingId = 'TOGETHER' | 'LEFT_BEHIND' | 'YIELD';
+
+/** 이 이상이면 시설 입장에서 수확이 성공한 것이다 (STORY.md §6). */
+export const YIELD_DEBT = 3;
+
+/** 경계는 0 과 `YIELD_DEBT` 딱 둘. 음수·소수는 0 쪽으로 눌러 방어한다. */
+export function endingFor(debt: number): EndingId {
+  const d = Number.isFinite(debt) ? Math.max(0, Math.floor(debt)) : 0;
+  if (d === 0) return 'TOGETHER';
+  if (d < YIELD_DEBT) return 'LEFT_BEHIND';
+  return 'YIELD';
+}
+
+/**
+ * 마지막 스테이지의 인덱스. **숫자를 박지 않는다** — 스테이지가 늘거나 줄어도
+ * 엔딩이 뜨는 지점은 배열의 끝을 따라간다.
+ *
+ * `total` 인자는 그 유도를 테스트가 확인하기 위한 것이다. 게임은 언제나
+ * 기본값(`STAGES.length`)으로 부른다.
+ */
+export function finalStageIndex(total: number = STAGES.length): number {
+  return Math.max(0, total - 1);
+}
+
+/** 이 스테이지를 클리어하면 엔딩인가. 세 플레이 방식 모두 같은 기준을 쓴다. */
+export function isFinalStage(
+  stageIndex: number,
+  total: number = STAGES.length,
+): boolean {
+  return stageIndex >= finalStageIndex(total);
+}
+
+/** 엔딩 화면이 읽는 전부. 여기 없는 값은 엔딩이 알 필요가 없다. */
+export interface EndingView {
+  id: EndingId;
+  /** 시설이 회수한 잔상 수 = 이 배치의 수율. */
+  debt: number;
+  totals: RunTotals;
+  playMode: PlayMode;
+  mode: Mode;
+}
+
+/**
+ * 런의 마지막 성적을 엔딩이 읽을 형태로 굳힌다.
+ * `STORY` 는 `runResult` 를 만들지 않으므로(모드별 기록의 기준이 다르다)
+ * 세 방식 모두 `runTotals` 에서 같은 방식으로 뽑는다.
+ */
+export function endingView(s: Session): EndingView {
+  return {
+    id: endingFor(s.debt),
+    debt: s.debt,
+    totals: runTotals(s),
+    playMode: s.playMode,
+    mode: s.mode,
+  };
 }
 
 // ── 런 (GAUNTLET / TIME_ATTACK) ────────────────────────────────────────────

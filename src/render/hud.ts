@@ -50,9 +50,11 @@ import {
   type TouchView,
 } from '../engine/touch';
 import {
+  endingView,
   loadBest,
   runTotals,
   type BestRecord,
+  type EndingId,
   type Mode,
   type PlayMode,
   type RunResult,
@@ -332,6 +334,29 @@ let helpOpen = false;
 /** main.ts 가 `H` / `?` / 탭으로 패널을 열고 닫을 때 알린다. */
 export function setHelpOpen(on: boolean): void {
   helpOpen = on;
+}
+
+/**
+ * 화면을 덮는 패널은 셋이다: 조작법(`H`) · 일시정지(`ESC`) · 환경 단서(`E`).
+ * **동시에 두 개가 읽히면 셋 다 못 읽는다.** 그래서 우선순위를 한 곳에서 정한다.
+ *
+ *   조작법 > 일시정지 > 단서
+ *
+ * 단서는 `renderer.ts` 안(월드 레이어)에서 그려지므로 여기서 끌 수 없다. 대신
+ * 위의 둘이 **불투명하게** 화면을 덮어(`blackout`) 그동안 단서가 보이지 않게 한다 —
+ * "위가 이기고 아래는 숨는다"가 이 규칙의 구현이다. 단서는 덮개가 걷히면 그대로 남아 있다.
+ */
+export type OverlayLayer = 'NONE' | 'NOTE' | 'PAUSE' | 'HELP';
+
+export function topLayer(o: {
+  help: boolean;
+  paused: boolean;
+  note: boolean;
+}): OverlayLayer {
+  if (o.help) return 'HELP';
+  if (o.paused) return 'PAUSE';
+  if (o.note) return 'NOTE';
+  return 'NONE';
 }
 
 export function isHelpOpen(): boolean {
@@ -620,7 +645,9 @@ const HELP_KEY_SIZE = 12;
  * 표가 아니라 **그림이 있는 안내**여야 하므로 모든 키를 `drawKeycap` 으로 그린다.
  */
 export function drawHelp(ctx: CanvasRenderingContext2D): void {
-  scrim(ctx, 0.88);
+  // 불투명하다. 반투명이면 아래 레이어(특히 밝은 종이색인 단서 패널)가 배어 나와
+  // 두 패널이 겹쳐 읽힌다 — `topLayer` 의 규칙이 여기서 픽셀로 지켜진다.
+  blackout(ctx);
   const p = HELP_PANEL;
   plate(ctx, p.x, p.y, p.w, p.h);
   hazard(ctx, p.x + 2, p.y + 2, p.w - 4, 5);
@@ -750,6 +777,11 @@ function text(
 function scrim(ctx: CanvasRenderingContext2D, alpha: number): void {
   ctx.fillStyle = withAlpha(C_BG, alpha);
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+}
+
+/** 화면을 완전히 덮는다. 아래 레이어가 한 픽셀도 배어 나오지 않는다. */
+function blackout(ctx: CanvasRenderingContext2D): void {
+  scrim(ctx, 1);
 }
 
 // ── 시드 고정 질감 ─────────────────────────────────────────────────────────
@@ -2665,10 +2697,224 @@ function drawSplits(
   });
 }
 
+// ── 엔딩 (STORY.md §6) ─────────────────────────────────────────────────────
+//
+// 클리어 오버레이(`drawClear`)와는 **다른 화면**이다. 성적표는 "얼마나 잘했나"를
+// 말하지만 엔딩은 "무엇을 두고 왔나"를 말한다. 갈림은 `DEBT` 하나 —
+// 전체 초기화로 지운 실수의 수가 곧 시설이 회수한 잔상의 수(수율)다.
+//
+// 톤은 시설 그대로다: 스텐실 도장, 경고 사선, 그리고 감정 없는 인쇄체.
+// 시설은 잔인하게 굴지 않는다. **사무적**이다 (STORY.md §3).
+
+/** 엔딩이 열리고 나서의 연출 타이밍(프레임). 60fps 기준. */
+const END_CRACK_AT = 66;
+const END_CRACK_LEN = 48;
+const END_STAMP_AT = END_CRACK_AT + END_CRACK_LEN + 24;
+
+interface EndingCopy {
+  /** 스텐실 도장 한 줄. 시설이 이 배치에 붙인 이름이다. */
+  head: string;
+  /** 무슨 일이 있었나. 설명하지 않고 보여주기만 한다. */
+  body: readonly string[];
+  /** 주인공의 마지막 속말. 없는 엔딩도 있다 — 할 말이 남지 않은 결말이다. */
+  whisper: string | null;
+}
+
+const ENDING_COPY: Readonly<Record<EndingId, EndingCopy>> = {
+  TOGETHER: {
+    head: 'NOTHING LEFT BEHIND',
+    body: ['넷이 함께 문을 나선다.'],
+    whisper: '아무것도 안 두고 왔어. 하나도.',
+  },
+  LEFT_BEHIND: {
+    head: 'SOME STAYED',
+    body: ['문이 닫힌다.', '안쪽에서, 회수반이 들어간다.'],
+    whisper: '...몇은 두고 왔네.',
+  },
+  YIELD: {
+    head: 'THE DOOR CLOSES',
+    body: ['당신은 나갔다.', '안에서, 다음 배치가 깨어난다.'],
+    whisper: null,
+  },
+};
+
+/**
+ * 인쇄체 한 줄.
+ *
+ * `wobble` 이 0 이면 반듯하다 — 시설의 글자는 늘 그랬다. 0 이 아니면 글자마다
+ * 조금씩 어긋난다: 회수량 0 을 적어 넣는 순간 **처음으로 인쇄체가 흔들린다**
+ * (STORY.md §6). 흔들림은 위치와 `seed` 의 해시에서 나온다 — `Math.random()` 없음.
+ */
+function printLine(
+  ctx: CanvasRenderingContext2D,
+  str: string,
+  cx: number,
+  y: number,
+  size: number,
+  color: string,
+  wobble = 0,
+  seed = 0,
+): void {
+  ctx.font = font(size, 'bold');
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  let x = cx - ctx.measureText(str).width / 2;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i] ?? '';
+    const w = ctx.measureText(ch).width;
+    const dy = wobble === 0 ? 0 : (skew(i * 37, seed * 11 + i) === 0 ? -wobble : wobble);
+    const dx = wobble === 0 ? 0 : (skew(i * 17 + 5, seed * 23) === 0 ? 0 : wobble * 0.6);
+    ctx.fillStyle = withAlpha(C_BG, 0.8);
+    ctx.fillText(ch, x + dx + 1, y + dy + 1);
+    ctx.fillStyle = color;
+    ctx.fillText(ch, x + dx, y + dy);
+    x += w;
+  }
+}
+
+/**
+ * 인트로의 그 벽. 넷씩 묶인 금이 화면 밖까지 이어지고, 마지막에 **하나가 더** 그어진다.
+ * `intro.ts` · `interlude.ts` 를 건드릴 수 없으므로 여기서 획 몇 개로만 표현한다 —
+ * 그림이 커지면 마지막 한 줄의 카피가 죽는다.
+ */
+function drawTallyWall(ctx: CanvasRenderingContext2D, clock: number): void {
+  const rows = 2;
+  const groups = 7;
+  const gap = 92;
+  const x0 = (CANVAS_W - (groups * gap - 24)) / 2;
+  const strokeH = 20;
+
+  ctx.fillStyle = withAlpha(C_STENCIL_DIM, 0.16);
+  for (let r = 0; r < rows; r++) {
+    const y = 56 + r * 34;
+    for (let gi = 0; gi < groups; gi++) {
+      const gx = x0 + gi * gap;
+      for (let k = 0; k < 4; k++) {
+        const sx = gx + k * 11 + skew(gi * 7 + k, r);
+        ctx.fillRect(sx, y, 2, strokeH);
+      }
+      // 다섯 번째는 앞의 넷을 가로지른다. 그게 "한 무더기"다.
+      ctx.save();
+      ctx.translate(gx - 4, y + strokeH);
+      ctx.rotate(-0.55);
+      ctx.fillRect(0, 0, 56, 2);
+      ctx.restore();
+    }
+  }
+
+  // 새 금 하나. 이번 배치다.
+  const t = Math.max(0, Math.min(1, (clock - END_CRACK_AT) / END_CRACK_LEN));
+  if (t <= 0) return;
+  const nx = x0 + groups * gap;
+  ctx.fillStyle = withAlpha(C_STENCIL, 0.5 + 0.45 * t);
+  ctx.fillRect(nx, 56, 2, strokeH * t);
+}
+
+/**
+ * 엔딩 화면. **읽기 전용** — `Session` 도 `SimState` 도 건드리지 않는다.
+ *
+ * @param clock 이 화면이 열린 뒤 흐른 프레임. 연출 타이밍에만 쓴다.
+ */
+export function drawEnding(
+  ctx: CanvasRenderingContext2D,
+  s: Session,
+  clock: number,
+): void {
+  const v = endingView(s);
+  const c = ENDING_COPY[v.id];
+  const yielded = v.id === 'YIELD';
+
+  // 세계는 이미 뒤에 남았다. 불투명하게 덮는다.
+  blackout(ctx);
+  if (yielded) drawTallyWall(ctx, clock);
+
+  stencilBig(ctx, c.head, CANVAS_W / 2, 176, 26, C_STENCIL, C_BG);
+
+  c.body.forEach((line, i) => {
+    text(ctx, line, CANVAS_W / 2, 220 + i * 26, 14, C_TEXT, 'center');
+  });
+
+  if (c.whisper !== null) {
+    text(ctx, c.whisper, CANVAS_W / 2, 288, 15, withAlpha(C_LAMP, 0.92), 'center');
+  }
+
+  // ── 배치 기록 ── 시설의 문서 어투 그대로 (STORY.md §5).
+  const recW = 380;
+  const recX = (CANVAS_W - recW) / 2;
+  const recY = 312;
+  plate(ctx, recX, recY, recW, 34);
+  hazard(ctx, recX + 2, recY + 2, recW - 4, 4, 0.75);
+  frame(ctx, recX, recY, recW, 34, C_EDGE, 0.5);
+  rivets(ctx, recX, recY, recW, 34);
+  printLine(
+    ctx,
+    `배치 기록 — 회수 ${v.debt}.`,
+    CANVAS_W / 2,
+    recY + 25,
+    13,
+    C_LAMP,
+    // 회수량 0. 시설의 양식에 없던 숫자다 — 여기서 처음으로 글자가 흔들린다.
+    v.id === 'TOGETHER' ? 1 : 0,
+    Math.floor(clock / 7),
+  );
+
+  // ── 런 요약 ──
+  const sumW = 700;
+  const sumX = (CANVAS_W - sumW) / 2;
+  const sumY = 372;
+  plate(ctx, sumX, sumY, sumW, 66);
+  frame(ctx, sumX, sumY, sumW, 66, C_EDGE, 0.45);
+  rivets(ctx, sumX, sumY, sumW, 66);
+
+  const t = v.totals;
+  const stats: [string, string, string][] = [
+    ['STAGES', `${t.stages} / ${STAGES.length}`, C_STENCIL],
+    ['AFTERIMAGES', `${t.afterimages}`, C_STENCIL],
+    ['DEBT', `${t.debt}`, t.debt > 0 ? C_DANGER : C_ON],
+    ['TIME', formatTime(t.ticks), C_STENCIL],
+    ['MEDALS', `${t.medals} ★`, t.medals > 0 ? C_LOOT : C_STENCIL_DIM],
+  ];
+  const colW = (sumW - 60) / stats.length;
+  stats.forEach((st, i) => {
+    const cx = sumX + 30 + colW * i + colW / 2;
+    stencil(ctx, st[0], cx, sumY + 24, 9, C_STENCIL_DIM, 'center', 'normal');
+    stencil(ctx, st[1], cx, sumY + 48, 15, st[2], 'center');
+  });
+
+  stencil(
+    ctx,
+    `${PLAY_MODE_LABEL[v.playMode]}  ·  ${v.mode}`,
+    CANVAS_W / 2,
+    sumY + 82,
+    9,
+    C_STENCIL_DIM,
+    'center',
+    'normal',
+  );
+
+  // ── 마지막 한 줄 ── 이 엔딩에만 있다. 감정이 없어서 더 아프다.
+  if (yielded && clock >= END_STAMP_AT) {
+    const a = Math.min(1, (clock - END_STAMP_AT) / 30);
+    printLine(ctx, '수율 양호.', CANVAS_W / 2, 500, 20, withAlpha(C_LAMP, a));
+  }
+
+  stencil(
+    ctx,
+    touchUi ? '탭하여 계속' : 'ENTER ▸ 계속',
+    CANVAS_W / 2,
+    CANVAS_H - 34,
+    13,
+    C_STENCIL,
+    'center',
+  );
+}
+
 // ── 일시정지 ───────────────────────────────────────────────────────────────
 
 export function drawPause(ctx: CanvasRenderingContext2D): void {
-  scrim(ctx, 0.82);
+  // drawHelp 와 같은 이유로 불투명하다. 단서를 펼쳐 둔 채 `ESC` 를 눌러도
+  // 이 화면 아래에서 조용히 가려질 뿐, 두 패널이 겹쳐 읽히지 않는다.
+  blackout(ctx);
   stencilBig(ctx, 'PAUSED', CANVAS_W / 2, 150, 34, C_STENCIL, withAlpha(C_BG, 0.82));
   stencil(
     ctx,

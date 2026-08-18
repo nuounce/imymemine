@@ -39,6 +39,7 @@ import {
 import {
   drawCalibration,
   drawClear,
+  drawEnding,
   drawHelp,
   drawHud,
   drawPause,
@@ -53,7 +54,18 @@ import {
   setHelpOpen,
   setTouchUi,
   TITLE_HITS,
+  topLayer,
 } from './render/hud';
+import {
+  createInterlude,
+  drawInterlude,
+  hasSeenInterlude,
+  INTERLUDE_TICKS,
+  interludeAfterStage,
+  markInterludeSeen,
+  tickInterlude,
+  type InterludeState,
+} from './render/interlude';
 import {
   createIntro,
   drawIntro,
@@ -63,6 +75,7 @@ import {
   tickIntro,
   type IntroState,
 } from './render/intro';
+import { openNoteId } from './render/note';
 import { createView, drawWorld, updateView } from './render/renderer';
 import {
   BODY_SUB,
@@ -369,6 +382,7 @@ function playSoundscape(): void {
  * (부채가 리셋되지 않는 범위는 런 하나다 — SPEC §3-2).
  */
 function beginStage(index: number): void {
+  resetEnding();
   startRun(session, index);
   // startStage 가 페이즈를 옮기지 않는 구현이어도 화면이 멈추지 않게 보정한다.
   if (session.phase === 'TITLE' || session.phase === 'CLEAR') {
@@ -380,6 +394,7 @@ function beginStage(index: number): void {
 }
 
 function backToTitle(): void {
+  resetEnding();
   const mode = session.mode;
   const playMode = session.playMode;
   session = createSession();
@@ -420,6 +435,65 @@ function leaveIntro(): void {
   input.flush();
 }
 
+// ── 막간 (막 사이 2칸 만화) ────────────────────────────────────────────────
+// 인트로와 같은 성질이다: SimState 를 만들지도 굴리지도 않고 자체 틱만 센다.
+// 막 경계(스테이지 index 3·7·11)와 마지막 스테이지(14) 클리어 뒤에 한 번씩 끼어들고,
+// 한 번 본 막간은 localStorage 기록으로 다시 나오지 않는다.
+//
+// **TIME_ATTACK 의 시계가 여기서 멈춘다**: 아래 onTick 의 INTERLUDE 분기는
+// `tickSession` 을 부르지 않고, `tickSession` 자체도 PLAY 가 아니면 `elapsedTicks` 를
+// 건드리지 않는다. 누적 시간은 `run.ticks + elapsedTicks` 뿐이므로 막간은 기록에 0틱이다.
+
+let interlude: InterludeState | null = null;
+/** 개발 모드에서 컷별 스크린샷을 찍기 위해 막간 타이머를 세운다(§21.2 자동화 QA). */
+let interludeFrozen = false;
+
+// ── 엔딩 ───────────────────────────────────────────────────────────────────
+//
+// 마지막 스테이지를 나오면(`ALLCLEAR`) 성적표보다 **엔딩이 먼저** 온다.
+// 엔딩을 넘기면 그때 기존 클리어/런 결과 화면이 나온다 — 두 화면은 하는 말이
+// 다르다: 엔딩은 무엇을 두고 왔는지를, 성적표는 얼마나 잘했는지를 말한다.
+//
+// 두 값 모두 **표시 전용**이다. 세션에 넣지 않는다 — 엔딩이 세션을 만지는 순간
+// 결정론 검사(SPEC §4)가 지켜야 할 경계가 흐려진다.
+
+/** 엔딩 화면이 열린 뒤 흐른 프레임. 금이 그어지는 연출과 인쇄체 도장에만 쓴다. */
+let endingClock = 0;
+/** 엔딩을 넘겼는가. 넘긴 뒤에는 같은 `ALLCLEAR` 에서 성적표를 그린다. */
+let endingDismissed = false;
+
+function resetEnding(): void {
+  endingClock = 0;
+  endingDismissed = false;
+}
+
+/** CLEAR 에서 다음 스테이지로. 막간을 볼 차례면 먼저 끼워 넣는다. */
+function advanceStage(): void {
+  // 이 호출이 마지막 스테이지를 넘기는 것이면 곧 ALLCLEAR 다. 연출 시계를 여기서 0 으로.
+  resetEnding();
+  nextStage(session);
+  session.resetHold = 0;
+  resetSfxEdges();
+  input.flush();
+}
+
+function enterInterlude(id: number): void {
+  interlude = createInterlude(id);
+  interludeFrozen = false;
+  session.phase = 'INTERLUDE';
+  session.paused = false;
+  input.flush();
+}
+
+/** 끝까지 봤든 스킵했든 여기로 모인다 — 본 것으로 기록하고 다음 스테이지로. */
+function leaveInterlude(): void {
+  if (interlude === null) return;
+  markInterludeSeen(interlude.id);
+  interlude = null;
+  interludeFrozen = false;
+  advanceStage();
+}
+
 /**
  * 인트로 중에는 **아무 키나** 스킵이다(`Esc` 포함). 게임 입력 매핑을 거치지 않고
  * 원시 keydown 을 직접 본다 — 매핑되지 않은 키로도 빠져나올 수 있어야 하기 때문이다.
@@ -430,6 +504,12 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (session.phase === 'INTRO') {
     leaveIntro();
+    return;
+  }
+  // 막간도 같다 — 아무 키나 스킵. 여기서 페이즈를 옮기고 엣지를 비우므로
+  // 스킵에 쓴 키가 곧바로 다음 스테이지의 조작으로 새지 않는다.
+  if (session.phase === 'INTERLUDE') {
+    leaveInterlude();
     return;
   }
 
@@ -497,14 +577,17 @@ function startPressed(): void {
     case 'TITLE':
       beginStage(0);
       break;
-    case 'CLEAR':
-      nextStage(session);
-      session.resetHold = 0;
-      resetSfxEdges();
-      input.flush();
+    case 'CLEAR': {
+      // 막 경계면 다음 스테이지 **전에** 막간이 들어간다. 이미 본 막간은 건너뛴다.
+      const id = interludeAfterStage(session.stageIndex);
+      if (id !== null && !hasSeenInterlude(id)) enterInterlude(id);
+      else advanceStage();
       break;
+    }
     case 'ALLCLEAR':
-      backToTitle();
+      // 엔딩 → 성적표 → 타이틀. 엔딩을 읽는 동안 성적표가 겹쳐 나오지 않는다.
+      if (!endingDismissed) endingDismissed = true;
+      else backToTitle();
       break;
     default:
       break;
@@ -675,6 +758,10 @@ function handleTaps(): void {
       case 'INTRO':
         leaveIntro();
         return; // 페이즈가 바뀌었다. 남은 탭이 새 화면의 버튼을 누르면 안 된다.
+      case 'INTERLUDE':
+        // 손가락에게도 "아무 곳이나" 스킵이어야 한다 — 막간에는 버튼이 없다.
+        leaveInterlude();
+        return;
       case 'TITLE':
         handleTitleTap(t.x, t.y);
         break;
@@ -749,6 +836,18 @@ function onTick(): void {
       }
       break;
     }
+    case 'INTERLUDE': {
+      // tickSession 을 부르지 않는다 → elapsedTicks 가 멈춘다(TIME_ATTACK 무영향).
+      if (interlude === null) {
+        advanceStage();
+        break;
+      }
+      if (!interludeFrozen) {
+        tickInterlude(interlude);
+        if (interlude.done) leaveInterlude();
+      }
+      break;
+    }
     case 'PLAY': {
       // 스크립트 큐가 살아 있으면 이 틱은 큐에서 꺼낸 마스크로 굴린다.
       // 얼림 중에도 한 칸 꺼내 버린다 — 틱은 어차피 흘러가므로, 그래야 큐
@@ -777,8 +876,11 @@ function onTick(): void {
       break;
     }
     case 'CLEAR':
+      updateView(view, session.sim, IDLE_EVENTS);
+      break;
     case 'ALLCLEAR':
       updateView(view, session.sim, IDLE_EVENTS);
+      if (!endingDismissed) endingClock++;
       break;
     default:
       break;
@@ -794,6 +896,9 @@ function onRender(): void {
     case 'INTRO':
       if (intro !== null) drawIntro(g, intro);
       break;
+    case 'INTERLUDE':
+      if (interlude !== null) drawInterlude(g, interlude, touchMode);
+      break;
     case 'TITLE':
       drawTitle(g, uiClock, {
         mode: session.mode,
@@ -805,20 +910,28 @@ function onRender(): void {
     case 'PLAY':
       drawWorld(g, session.sim, view);
       drawHud(g, session, m);
-      // 조작 UI 는 HUD 위, 일시정지 스크림 아래. 터치 기기에서만 존재한다.
+      // 조작 UI 는 HUD 위, 일시정지 화면 아래. 터치 기기에서만 존재한다.
       if (touchMode) drawTouchControls(g, session, touch.view());
-      if (session.paused) drawPause(g);
+      drawTopLayer();
       break;
     case 'TRANSITION':
       drawWorld(g, session.sim, view);
       drawHud(g, session, m);
       drawTransition(g, session);
-      if (session.paused) drawPause(g);
+      drawTopLayer();
       break;
     case 'CLEAR':
-    case 'ALLCLEAR':
       drawWorld(g, session.sim, view);
       drawClear(g, session);
+      break;
+    case 'ALLCLEAR':
+      // 엔딩은 세계를 지우고 혼자 선다. 넘긴 뒤에야 성적표가 나온다.
+      if (endingDismissed) {
+        drawWorld(g, session.sim, view);
+        drawClear(g, session);
+      } else {
+        drawEnding(g, session, endingClock);
+      }
       break;
     default:
       break;
@@ -832,9 +945,34 @@ function onRender(): void {
     drawMicNotice(g, micNotice);
   }
 
-  // 조작법은 **무엇보다 위**다. 일시정지 스크림·전환·성적표·마이크 안내 위에 얹히므로
+  // 조작법은 **무엇보다 위**다. 일시정지·전환·성적표·마이크 안내 위에 얹히므로
   // 어느 페이즈에서 열었든 가려지는 일이 없다.
   if (isHelpOpen()) drawHelp(g);
+}
+
+/**
+ * 겹치는 패널 중 **하나만** 그린다 (`hud.topLayer`).
+ *
+ * 단서 패널은 `drawWorld` 안(월드 레이어)에서 이미 그려졌으므로 여기서 끄지 못한다.
+ * 대신 일시정지가 불투명하게 덮어 그동안 보이지 않게 한다 — 조작법도 같은 규칙이고,
+ * 조작법은 어느 페이즈에서나 열리므로 `onRender` 끝에서 다시 한 번 맨 위에 얹힌다.
+ */
+function drawTopLayer(): void {
+  switch (topLayer({
+    help: isHelpOpen(),
+    paused: session.paused,
+    note: openNoteId() !== null,
+  })) {
+    case 'HELP':
+      drawHelp(g);
+      break;
+    case 'PAUSE':
+      drawPause(g);
+      break;
+    default:
+      // 'NOTE' / 'NONE' — 단서는 이미 월드 레이어에 그려졌다. 얹을 것이 없다.
+      break;
+  }
 }
 
 /** 폴백 사유 한 줄. 화면 하단 밴드 위에 조용히 얹는다. */
@@ -878,6 +1016,10 @@ cv.addEventListener('pointerdown', (e) => {
 
   if (session.phase === 'INTRO') {
     leaveIntro();
+    return;
+  }
+  if (session.phase === 'INTERLUDE') {
+    leaveInterlude();
     return;
   }
   if (session.phase === 'TITLE') {
@@ -1036,6 +1178,25 @@ if (import.meta.env.DEV) {
     /** introShow 로 얼린 인트로를 다시 재생한다. */
     introPlay(): void {
       introFrozen = false;
+    },
+
+    /**
+     * 막간 `id`(0~3) 를 지정 틱에서 **얼려** 보여준다. 인트로와 같은 이유다 —
+     * 같은 프레임을 다시 찍을 수 있어야 컷 스크린샷 QA 가 성립한다.
+     * 얼림은 `interlude.done` 을 세우지 않는 것으로 충분하다(틱을 직접 세팅하므로).
+     */
+    interludeShow(id: number, tick: number): void {
+      enterInterlude(Number.isFinite(id) ? Math.trunc(id) : 0);
+      if (interlude === null) return;
+      const n = Number.isFinite(tick) ? Math.trunc(tick) : 0;
+      interlude.tick = Math.max(0, Math.min(INTERLUDE_TICKS - 1, n));
+      interlude.done = false;
+      interludeFrozen = true;
+    },
+
+    /** interludeShow 로 얼린 막간을 다시 굴린다. */
+    interludePlay(): void {
+      interludeFrozen = false;
     },
 
     /** n 틱 대기(마스크 0)를 큐 뒤에 붙인다. */
