@@ -175,6 +175,8 @@
 | [`STORY.md`](./STORY.md) | 서사 사실·대사 규칙·엔딩 | 대사·단서·연출을 쓸 때 |
 | [`WALKTHROUGH.md`](./WALKTHROUGH.md) | 스테이지별 실측 공략 | 레벨을 고치거나 검증할 때 |
 | [`AI-KICK-IDEAS.md`](./AI-KICK-IDEAS.md) | AI 킥 아이데이션과 평가 근거 | AI 킥 작업 전 |
+| [`PRD-AI-STORY.md`](./0821%20seongwoo%20문서%20작업/PRD-AI-STORY.md) | AI 스토리 시스템(선택·변형·레거시) 기획 — 결정 대기 | AI 스토리 기능을 논의·구현할 때 |
+| [`STORY-BRANCH.md`](./0821%20seongwoo%20문서%20작업/STORY-BRANCH.md) | 분기 서사·엔딩 4종·「새벽」 설계 — 결정 대기 | 분기 스토리를 논의·집필할 때 |
 | [`PITCH.md`](./PITCH.md) | 해커톤 강점·심사 Q&A·발표 문장 | 발표 준비할 때 |
 
 ### 작업 규칙
