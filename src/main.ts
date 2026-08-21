@@ -102,7 +102,7 @@ function die(msg: string): never {
 
 const canvas = document.getElementById('game');
 if (!(canvas instanceof HTMLCanvasElement)) {
-  die('canvas#game 를 찾지 못했습니다. index.html 을 확인하세요.');
+  die('게임 화면을 불러오지 못했어. 페이지를 새로고침해 봐.');
 }
 const cv = canvas as HTMLCanvasElement;
 cv.width = CANVAS_W;
@@ -110,7 +110,7 @@ cv.height = CANVAS_H;
 
 const ctx = cv.getContext('2d', { alpha: false });
 if (ctx === null) {
-  die('2D 컨텍스트를 얻지 못했습니다. 하드웨어 가속을 확인하세요.');
+  die('이 환경에서는 그래픽을 켤 수 없어. 브라우저를 업데이트하거나 다른 브라우저로 열어 봐.');
 }
 const g = ctx as CanvasRenderingContext2D;
 g.imageSmoothingEnabled = false;
@@ -295,7 +295,7 @@ function pickTitleIndex(n: number): void {
 
 /** 마이크 실패를 한 줄로 알리고 EASY 로 내려앉는다. */
 function fallbackToEasy(): void {
-  micNotice = `마이크 사용 불가 — ${mic.error() ?? '알 수 없는 오류'} EASY 모드로 계속합니다.`;
+  micNotice = `마이크를 쓸 수 없어 — ${mic.error() ?? '원인을 알 수 없어.'} EASY 모드로 계속한다.`;
   micNoticeTimer = MIC_NOTICE_TICKS;
   mic.stop();
   session.mode = 'EASY';

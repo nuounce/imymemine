@@ -831,7 +831,7 @@ function panel1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h * 0.55 }, 4, 0.5, 0.06, '#4d5f96', 0.5);
   screentone(g, r.x, r.y + r.h - 60, r.w, 60, 0.3, '#3c4a78', 0.42);
 
-  captionBox(g, r, '...눈 떴는데, 여기 어디야.', 'tl', t, 31);
+  captionBox(g, r, '...여기, 우리 집 아닌데.', 'tl', t, 31);
   narration(g, r, '우리 집 천장엔 야광별 붙어 있었는데. 여긴 그냥 시멘트야.', 'br', t, 32);
 }
 
@@ -888,7 +888,7 @@ function panel2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   screentone(g, r.x, r.y, r.w, r.h, 0.18, '#8fa4d8', 0.16, 0.6, 5);
 
-  captionBox(g, r, '금이 그어져 있어. 넷씩 묶어서.', 'tl', t, 41);
+  captionBox(g, r, '벽에 줄이 그어져 있어. 넷씩 묶어서.', 'tl', t, 41);
   narration(g, r, '누가 세고 있었던 거야, 이거.', 'br', t, 42);
 }
 
@@ -947,7 +947,7 @@ function panel3(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 5, 0.05, 0.42, '#2c3760', 0.6);
 
-  captionBox(g, r, '손잡이가 없네.', 'bl', t, 51);
+  captionBox(g, r, '손잡이부터 없애 놨네.', 'bl', t, 51);
   narration(g, r, '내가 뭘 할 수 있는지 알고 가둔 거야, 이 사람들.', 'tr', t, 52);
 }
 
@@ -1112,7 +1112,7 @@ function panel4(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   }
 
   captionBox(g, r, '손을 뻗었는데,', 'tl', t, 61);
-  narration(g, r, '뭐야. 하나가 뒤에 남았어.', 'bl', t, 62);
+  narration(g, r, '뭐야. 방금 뭐가 남았는데.', 'bl', t, 62);
 }
 
 /** 칸 4 의 빛만 **칸 밖으로** 번진다. 클립을 푼 뒤 거터 위에 얹는다. */
@@ -1289,7 +1289,7 @@ function panel6(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 4, 0.08, 0.34, '#2b3660', 0.5);
 
   captionBox(g, r, '이 문, 안에서는 안 열리는 거구나.', 'tl', t, 81);
-  narration(g, r, '누가 계속 밟고 있어야 열리는 거고. 근데 나는 하나야.', 'br', t, 82);
+  narration(g, r, '누가 계속 밟고 있어야 열리는 거네. 근데 몸은 하나잖아.', 'br', t, 82);
 }
 
 // ── 칸 7 — 넷 (전면) ───────────────────────────────────────────────────────

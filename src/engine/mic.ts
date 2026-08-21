@@ -116,17 +116,17 @@ function reasonOf(err: unknown): string {
     case 'NotAllowedError':
     case 'PermissionDeniedError':
     case 'SecurityError':
-      return '마이크 권한이 거부되었습니다.';
+      return '마이크 권한이 꺼져 있어. 브라우저 설정에서 허용해 봐.';
     case 'NotFoundError':
     case 'DevicesNotFoundError':
-      return '마이크 장치를 찾지 못했습니다.';
+      return '연결된 마이크가 없어. 연결하고 다시 해 봐.';
     case 'NotReadableError':
     case 'TrackStartError':
-      return '마이크를 다른 앱이 사용 중입니다.';
+      return '다른 앱이 마이크를 잡고 있어. 그 앱을 끄고 다시 해 봐.';
     case 'OverconstrainedError':
-      return '이 마이크로는 요청한 설정을 쓸 수 없습니다.';
+      return '이 마이크는 쓸 수 없어. 다른 마이크로 바꿔 봐.';
     default:
-      return '마이크를 열지 못했습니다.';
+      return '마이크를 켜지 못했어. 다시 시도해 봐.';
   }
 }
 
@@ -219,13 +219,13 @@ export function createMic(): Mic {
       buf = new Uint8Array(an.fftSize);
       stream = s;
       for (const t of s.getTracks()) {
-        t.onended = (): void => fail('마이크 입력이 끊겼습니다.');
+        t.onended = (): void => fail('마이크 연결이 끊겼어. 다시 연결해 봐.');
       }
       if (ctx.state === 'suspended') void ctx.resume();
       beginCalibration();
     } catch {
       for (const t of s.getTracks()) t.stop();
-      fail('마이크 분석기를 만들지 못했습니다.');
+      fail('마이크 소리를 처리할 수 없어. 새로고침해 봐.');
     }
   }
 
@@ -263,18 +263,18 @@ export function createMic(): Mic {
       const md = navigator.mediaDevices as MediaDevices | undefined;
       if (md === undefined || typeof md.getUserMedia !== 'function') {
         // 대부분 http:// 로 열어서 보안 컨텍스트가 아닌 경우다.
-        fail('이 브라우저/주소에서는 마이크를 쓸 수 없습니다 (https 또는 localhost 필요).');
+        fail('이 주소에서는 마이크를 못 써. 보안 연결(https) 주소로 열어 봐.');
         return;
       }
       const Ctor = audioCtor();
       if (Ctor === undefined) {
-        fail('이 브라우저는 WebAudio 를 지원하지 않습니다.');
+        fail('이 브라우저로는 소리를 들을 수 없어. 크롬이나 사파리 최신 버전으로 열어 봐.');
         return;
       }
       try {
         ctx = new Ctor();
       } catch {
-        fail('오디오 장치를 열지 못했습니다.');
+        fail('소리 기능을 켜지 못했어. 새로고침해 봐.');
         return;
       }
       phase = 'REQUEST';
@@ -301,7 +301,7 @@ export function createMic(): Mic {
       if (phase === 'REQUEST') {
         requestTicks++;
         if (requestTicks >= REQUEST_TIMEOUT_TICKS) {
-          fail('마이크 권한 응답이 없습니다.');
+          fail('마이크 허용 창에 응답이 없었어. 새로고침하고 허용을 눌러 봐.');
         }
         return;
       }
@@ -320,7 +320,7 @@ export function createMic(): Mic {
         }
         rms = Math.sqrt(sum / Math.max(1, buf.length));
       } catch {
-        fail('마이크 신호를 읽지 못했습니다.');
+        fail('마이크 소리가 안 들어와. 연결을 확인해 봐.');
         return;
       }
 

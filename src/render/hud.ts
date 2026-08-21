@@ -246,12 +246,12 @@ interface PromptCopy {
 }
 
 const PROMPT_COPY: Readonly<Record<PromptId, PromptCopy>> = {
-  MOVE: { key: 'WASD', touchKey: '스틱', line: '움직여 봐', color: C_STENCIL },
+  MOVE: { key: 'WASD', touchKey: '스틱', line: '움직여 본다', color: C_STENCIL },
   INTERACT: { key: 'E', touchKey: 'E', line: '만져 본다', color: C_ON },
   COMMIT: { key: 'R', touchKey: 'COMMIT', line: '여기 나를 남긴다', color: C_LOOT, big: true },
   OVERWRITE: { key: 'Q', touchKey: 'Q', line: '잔상 하나를 다시 녹화', color: C_LOOT },
   RUN: { key: 'SHIFT', touchKey: '링 밖', line: '뛰면 소리가 난다', color: C_DANGER },
-  TIMEUP: { key: '', touchKey: '', line: '곧 강제로 확정된다', color: C_DANGER },
+  TIMEUP: { key: '', touchKey: '', line: '곧 강제로 잔상이 된다', color: C_DANGER },
 };
 
 /**
@@ -589,7 +589,7 @@ const HELP_GROUPS: readonly HelpGroup[] = [
       {
         keys: ['SHIFT'],
         touchKeys: ['링 밖까지'],
-        line: '달리기 — 발소리가 남고, 간수가 그 소리를 조사하러 온다',
+        line: '달리기 — 발소리가 나고, 간수가 소리를 듣고 찾아온다',
         color: C_DANGER,
       },
     ],
@@ -604,7 +604,7 @@ const HELP_GROUPS: readonly HelpGroup[] = [
         color: C_LOOT,
       },
     ],
-    note: '잔상은 궤적이 아니라 입력 테이프다 — 과거의 나가 같은 키를 다시 누른다. 혼자서는 못 누르는 두 버튼을 그렇게 함께 누른다.',
+    note: '잔상은 이동 경로가 아니라 내 조작 그대로를 재생한다 — 과거의 내가 같은 키를 다시 누른다. 그래서 혼자 못 누르는 두 버튼도 같이 누를 수 있다.',
   },
   {
     title: '고치기',
@@ -629,7 +629,7 @@ const HELP_GROUPS: readonly HelpGroup[] = [
       { keys: ['E'], touchKeys: ['E'], line: '눈앞의 버튼 · 레버를 만진다' },
       { keys: ['ESC'], touchKeys: ['II'], line: '일시정지' },
       { keys: ['M'], touchKeys: ['뮤트'], line: '소리 끄기 / 켜기' },
-      { keys: ['−', '='], touchKeys: [], join: '/', line: '마이크 감도 (LISTEN 모드) — 현장이 시끄러우면 낮춘다' },
+      { keys: ['−', '='], touchKeys: [], join: '/', line: '마이크 감도 (LISTEN 모드) — 주변이 시끄러우면 낮춘다' },
     ],
   },
 ];
@@ -733,14 +733,14 @@ const PLAY_MODE_LABEL: Readonly<Record<PlayMode, string>> = {
 /** 칩 아래 한 줄. 셋 다 항상 보인다 — 고르기 전에 뭔지 알아야 한다. */
 const PLAY_MODE_CAPTION: Readonly<Record<PlayMode, string>> = {
   STORY: '한 판씩',
-  GAUNTLET: '부채 누적',
+  GAUNTLET: 'DEBT 누적',
   TIME_ATTACK: '총 시간',
 };
 
 const PLAY_MODE_LINE: Readonly<Record<PlayMode, string>> = {
   STORY: '스테이지를 하나씩 클리어한다. 처음이라면 이쪽.',
-  GAUNTLET: '부채는 끝까지 따라온다 — 처음부터 끝까지 이어서, DEBT 는 지워지지 않는다',
-  TIME_ATTACK: '모든 루프의 시간이 합산된다 — 조기 확정(R)이 곧 기록 단축',
+  GAUNTLET: '전 스테이지를 쉬지 않고 이어서 — DEBT 는 끝까지 남는다',
+  TIME_ATTACK: '모든 루프의 시간이 합산된다 — R로 일찍 확정할수록 기록이 준다',
 };
 
 function pad2(n: number): string {
@@ -1394,10 +1394,10 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   ctx.fillRect(bx, by, bw, bh);
   hazard(ctx, bx, by, bw, 5);
   frame(ctx, bx, by, bw, bh, C_LOOT, 0.7, 2);
-  stencilBig(ctx, '이어폰을 껴 주세요', CANVAS_W / 2, by + 40, 26, C_LOOT, C_PLATE_LO);
+  stencilBig(ctx, '이어폰 착용', CANVAS_W / 2, by + 40, 26, C_LOOT, C_PLATE_LO);
   text(
     ctx,
-    '스피커로 들으면 게임 소리를 게임이 듣습니다.',
+    '스피커 사용 시 게임 소리가 마이크로 들어감.',
     CANVAS_W / 2,
     by + 62,
     12,
@@ -1407,7 +1407,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
 
   stencilBig(
     ctx,
-    waiting ? '마이크 권한을 허용해 주세요' : '조용히 해주세요 — 환경음 측정 중',
+    waiting ? '마이크 권한 허용 대기 중' : '정숙 — 주변 소음 측정 중',
     CANVAS_W / 2,
     py + 150,
     20,
@@ -1433,8 +1433,8 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   text(
     ctx,
     waiting
-      ? '브라우저의 마이크 요청을 허용하면 시작합니다.'
-      : '지금 이 방의 소음을 바닥값으로 잡습니다.',
+      ? '브라우저의 마이크 요청을 허용하면 시작된다.'
+      : '지금 들리는 소음을 기준값으로 기록 중.',
     CANVAS_W / 2,
     y + 30,
     11,
@@ -1444,8 +1444,8 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   text(
     ctx,
     waiting
-      ? '거부하거나 응답하지 않아도 EASY 모드로 계속 진행됩니다.'
-      : '이어폰이 없어도 플레이할 수 있습니다 — 지금 들리는 게임 소리를 바닥값에 함께 넣습니다.',
+      ? '거부해도 EASY 모드로 계속된다.'
+      : '이어폰 없이도 플레이 가능 — 지금 나는 게임 소리도 기준값에 포함됨.',
     CANVAS_W / 2,
     y + 48,
     10,
@@ -1454,7 +1454,7 @@ export function drawCalibration(ctx: CanvasRenderingContext2D, mic: MicView): vo
   );
   text(
     ctx,
-    '오디오는 저장하지도 전송하지도 않습니다. 테이프에 남는 것은 틱당 2비트의 음량 레벨뿐입니다.',
+    '소리는 저장·전송하지 않음. 기록되는 것은 음량 단계뿐.',
     CANVAS_W / 2,
     y + 70,
     10,
@@ -1690,10 +1690,10 @@ function drawTouchPicker(ctx: CanvasRenderingContext2D, s: Session): void {
   frame(ctx, p.x, p.y, p.w, p.h, C_LOOT, 0.55, 2);
   rivets(ctx, p.x, p.y, p.w, p.h);
 
-  stencilBig(ctx, '지울 나를 고르시오', CANVAS_W / 2, p.y + 52, 22, C_LOOT, C_PLATE);
+  stencilBig(ctx, '다시 녹화할 잔상을 고르시오', CANVAS_W / 2, p.y + 52, 22, C_LOOT, C_PLATE);
   stencil(
     ctx,
-    '고른 잔상의 테이프는 사라지고 이 루프를 다시 녹화한다 — 스테이지당 1회',
+    '고른 잔상은 지워지고 이번 루프를 새로 녹화한다 — 스테이지당 1회',
     CANVAS_W / 2,
     p.y + 74,
     10,
@@ -1943,7 +1943,7 @@ export function drawTitle(
   drawDetectRow(ctx, mode, focusRow === 1);
   stencil(
     ctx,
-    touchUi ? '탭해서 고르고   PLAY 로 시작' : '↑ ↓ 줄 이동    ← → 선택    ENTER 시작',
+    touchUi ? '탭 ▸ 선택 · PLAY ▸ 시작' : '↑ ↓ 줄 이동    ← → 선택    ENTER 시작',
     CANVAS_W / 2,
     432,
     9,
@@ -1987,10 +1987,10 @@ export function drawTitle(
   if (touchUi) {
     // 키 목록은 손가락에게 거짓 정보다. 그 자리에 실제로 누를 수 있는 두 판을 놓는다.
     tapButton(ctx, TOUCH_INTRO_BTN, '인트로 다시보기', C_STENCIL_DIM);
-    tapButton(ctx, TOUCH_MUTE_BTN, '뮤트 켜기 / 끄기', C_STENCIL_DIM);
+    tapButton(ctx, TOUCH_MUTE_BTN, '소리 켜기 / 끄기', C_STENCIL_DIM);
     stencil(
       ctx,
-      '왼쪽 = 이동 스틱 · 오른쪽 = COMMIT · 기기를 가로로 두세요',
+      '왼쪽 = 이동 스틱 · 오른쪽 = COMMIT · 화면은 가로로',
       CANVAS_W / 2,
       576,
       10,
@@ -2386,8 +2386,8 @@ function drawDetectRow(
   text(
     ctx,
     mode === 'LISTEN'
-      ? '마이크를 씁니다. 숨소리도 들립니다 — 시끄러우면 간수가 옵니다'
-      : '마이크를 쓰지 않습니다. 키보드만으로 플레이합니다',
+      ? '마이크를 쓴다. 숨소리도 들린다 — 시끄러우면 간수가 온다'
+      : '마이크를 쓰지 않는다. 키보드만으로 플레이한다',
     CANVAS_W / 2,
     ROW2_Y + CHIP_H + 30,
     10,
@@ -2530,7 +2530,7 @@ export function drawClear(ctx: CanvasRenderingContext2D, s: Session): void {
   } else {
     text(
       ctx,
-      `PAR ${s.level.par} 이하의 나로 다시 빠져나가 보라`,
+      `잔상 ${s.level.par}개 이하로 깨면 메달이 붙는다`,
       CANVAS_W / 2,
       medalY,
       11,
@@ -2596,7 +2596,7 @@ function drawRunResult(ctx: CanvasRenderingContext2D, r: RunResult): void {
   );
   text(
     ctx,
-    timed ? '모든 루프의 시간이 합산된 기록' : '한 런을 관통한, 지울 수 없는 부채',
+    timed ? '모든 루프의 시간이 합산된 기록' : '이번 런에서 끝까지 쌓인 DEBT',
     CANVAS_W / 2,
     py + 154,
     10,
@@ -2614,7 +2614,7 @@ function drawRunResult(ctx: CanvasRenderingContext2D, r: RunResult): void {
     stencil(ctx, 'NEW BEST ★', CANVAS_W / 2, py + 184, 14, C_LOOT, 'center');
     if (!r.saved) {
       // 저장이 막힌 환경(프라이빗 모드 등)이라는 사실을 숨기지 않는다.
-      text(ctx, '기록을 저장하지 못했습니다 (브라우저 저장소 차단)', CANVAS_W / 2, py + 204, 9, C_TEXT_DIM, 'center');
+      text(ctx, '기록을 저장하지 못했어 — 브라우저 저장소가 막혀 있어.', CANVAS_W / 2, py + 204, 9, C_TEXT_DIM, 'center');
     }
   } else if (r.previousBest !== null) {
     stencil(
@@ -2900,7 +2900,7 @@ export function drawEnding(
 
   stencil(
     ctx,
-    touchUi ? '탭하여 계속' : 'ENTER ▸ 계속',
+    touchUi ? '탭 ▸ 계속' : 'ENTER ▸ 계속',
     CANVAS_W / 2,
     CANVAS_H - 34,
     13,
@@ -2918,7 +2918,7 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
   stencilBig(ctx, 'PAUSED', CANVAS_W / 2, 150, 34, C_STENCIL, withAlpha(C_BG, 0.82));
   stencil(
     ctx,
-    touchUi ? 'RESUME 를 탭하세요' : 'ESC ▸ RESUME',
+    touchUi ? '탭 ▸ RESUME' : 'ESC ▸ RESUME',
     CANVAS_W / 2,
     176,
     11,
@@ -2941,10 +2941,10 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
       text(ctx, r[1], CANVAS_W / 2 - 110, y, 11, C_TEXT_DIM, 'left');
     });
     tapButton(ctx, PAUSE_RESUME_BTN, 'RESUME', C_STENCIL);
-    tapButton(ctx, PAUSE_MUTE_BTN, '뮤트 켜기 / 끄기', C_STENCIL_DIM);
+    tapButton(ctx, PAUSE_MUTE_BTN, '소리 켜기 / 끄기', C_STENCIL_DIM);
     text(
       ctx,
-      '잔상은 궤적이 아니라 입력 테이프다. 매 루프 세계는 틱 0으로 되감기고, 과거의 나는 같은 키를 다시 누른다.',
+      '잔상은 이동 경로가 아니라 내 조작 그대로를 재생한다. 루프마다 세계는 처음으로 되감기고, 과거의 내가 같은 키를 다시 누른다.',
       CANVAS_W / 2,
       CANVAS_H - 46,
       10,
@@ -2956,13 +2956,13 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
 
   const rows: [string, string][] = [
     ['WASD / ARROWS', '이동'],
-    ['SHIFT', '달리기 — 12틱마다 소음, WARDEN 이 조사하러 온다'],
+    ['SHIFT', '달리기 — 발소리가 나고, 간수(WARDEN)가 소리를 듣고 온다'],
     ['E', '버튼 / 레버 상호작용'],
     ['R', '루프 조기 확정 → 지금까지의 나를 잔상으로 남긴다'],
-    ['Q → 1/2/3', '잔상 하나를 지우고 재녹화 (스테이지당 1회)'],
+    ['Q → 1/2/3', '잔상 하나를 지우고 다시 녹화 (스테이지당 1회)'],
     ['BACKSPACE 2초', '스테이지 전체 초기화 — DEBT +1, 절대 안 지워진다'],
     ['M', '뮤트'],
-    ['− / =', 'LISTEN 모드 마이크 감도 — 현장이 시끄러우면 낮춰라'],
+    ['− / =', 'LISTEN 모드 마이크 감도 — 주변이 시끄러우면 낮춘다'],
   ];
   rows.forEach((r, i) => {
     const y = 224 + i * 24;
@@ -2972,7 +2972,7 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
 
   text(
     ctx,
-    '잔상은 궤적이 아니라 입력 테이프다. 매 루프 세계는 틱 0으로 되감기고, 과거의 나는 같은 키를 다시 누른다.',
+    '잔상은 이동 경로가 아니라 내 조작 그대로를 재생한다. 루프마다 세계는 처음으로 되감기고, 과거의 내가 같은 키를 다시 누른다.',
     CANVAS_W / 2,
     CANVAS_H - 46,
     10,

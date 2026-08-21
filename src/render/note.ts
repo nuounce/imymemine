@@ -92,7 +92,7 @@ export const NOTES_BY_STAGE: Record<string, readonly NoteDef[]> = {
       tx: 1,
       ty: 4,
       kind: 'PRINT',
-      text: '배치 기록 — 회수 3. 손실 1. 손실분 자재 전용.',
+      text: '배치 기록 — 회수 3. 손실 1. 손실분은 자재로 처리.',
     },
   ],
   '08_MY': [
