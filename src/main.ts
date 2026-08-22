@@ -82,6 +82,7 @@ import {
   BODY_SUB,
   CANVAS_H,
   CANVAS_W,
+  IN_MIC_MASK,
   IN_MIC_SHIFT,
   RESET_HOLD_TICKS,
   TILE_SUB,
@@ -442,6 +443,12 @@ function leaveIntro(): void {
 function advanceIntroStory(): void {
   if (intro === null) return;
   advanceIntro(intro);
+  // 중간 컷을 넘긴 키의 메타 엣지도 매번 지운다 (leaveIntro 의 flush 와 같은 원리).
+  // 안 지우면 H/M 으로 컷을 넘길 때 그 엣지가 살아남아 다음 틱 handleMeta 가
+  // 도움말/뮤트를 발동시키고, 도움말이 열린 채 keydown 이 계속 컷을 넘겨
+  // 보이지도 않는 인트로가 끝까지 소비될 수 있다. 마지막 컷에서는 leaveIntro 가
+  // 한 번 더 flush 하지만, flush 는 엣지 큐를 비울 뿐이라 이중이어도 무해하다.
+  input.flush();
   if (intro.done) leaveIntro();
 }
 
@@ -1025,9 +1032,21 @@ cv.addEventListener('pointerdown', (e) => {
   }
 
   if (session.phase === 'TITLE') {
-    // 키보드 ENTER 경로와 같은 이유로, 마이크는 이 제스처 핸들러 안에서 연다.
-    if (session.mode === 'LISTEN') mic.start();
-    beginStage(0);
+    // 클릭한 곳을 먼저 판정한다 — 히트테스트 없이 곧장 시작하면 마우스로는
+    // GAUNTLET/LISTEN 등 모드 칩을 고를 수 없다 (QA §9.2 #3). 칩·버튼이면
+    // 터치 탭과 같은 동작을 그대로 재사용하고, PLAY 판이나 빈 곳이면 예전처럼
+    // 즉시 시작한다 — "클릭만으로 시작"(SPEC §8)은 빈 곳 클릭으로 보존된다.
+    const p = canvasPoint(cv, e.clientX, e.clientY);
+    const id = hitTest(TITLE_HITS, p.x, p.y);
+    if (id === null) {
+      // 키보드 ENTER 경로와 같은 이유로, 마이크는 이 제스처 핸들러 안에서 연다.
+      if (session.mode === 'LISTEN') mic.start();
+      beginStage(0);
+    } else {
+      // PLAY 판이면 시작으로 이어지므로 마이크도 여기(제스처 안)서 먼저 연다.
+      if (id === 'PLAY' && session.mode === 'LISTEN') mic.start();
+      handleTitleTap(p.x, p.y);
+    }
   }
 });
 window.addEventListener('keydown', () => audio.resume(), { once: true });
@@ -1086,11 +1105,14 @@ if (import.meta.env.DEV) {
   };
 
   /**
-   * 마스크는 테이프(Uint8Array)에 그대로 들어간다 — 하위 6비트로 못박는다.
-   * 비트 6~7 은 마이크 전용이라 스크립트로 위조하지 않는다. 그 비트는 실제 마이크
-   * 레벨이 `micBits()` 에서 OR 되며, 스크립트 큐와 마이크는 그대로 공존한다.
+   * 비트 6~7(마이크 레벨)만 스크립트 위조를 금지한다 — 실제 마이크 레벨이
+   * `micBits()` 에서 OR 되며, 스크립트 큐와 마이크는 그대로 공존한다.
+   * 그 외 비트(이동·상호작용·달리기·IN_FLASH=256)는 전부 통과시킨다.
+   * 과거 `& 63` 은 IN_FLASH 까지 잘라 눈뽕 스테이지(9~11)의 정답 테이프를
+   * 훅으로 재생할 수 없게 만들었다(테이프는 Uint16 으로 확장된 지 오래다).
    */
-  const clean = (m: number): number => (Number.isFinite(m) ? Math.trunc(m) & 63 : 0);
+  const clean = (m: number): number =>
+    Number.isFinite(m) ? Math.trunc(m) & ~IN_MIC_MASK : 0;
 
   const api = {
     /** 현재 Session. 페이즈 전환 때 객체가 교체되므로 매번 다시 읽어야 한다. */

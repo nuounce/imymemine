@@ -264,6 +264,11 @@ function transitionCopy(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): s
  */
 export function commitLoop(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): void {
   if (s.phase !== 'PLAY') return;
+  // 슬롯 선택 메뉴가 열린 채 TIMEUP/체포로 강제 확정될 수 있다 (선택 중에도
+  // 세계는 흐른다). 플래그를 여기서 지우지 않으면 다음 루프가 오버레이 + 입력
+  // 동결 상태로 시작하고, 1/2/3 이 스테이지당 1회뿐인 덮어쓰기를 오소모한다.
+  // 확정은 사유가 무엇이든 선택 메뉴를 닫는다.
+  s.awaitingOverwritePick = false;
   const tape = Uint16Array.from(s.recording);
   const corpse = reason === 'CAPTURED';
 

@@ -255,6 +255,11 @@ export function createTouch(opts: TouchOptions): TouchInput {
   let context: TouchContext = 'NONE';
   let touchSeen = coarsePointer();
   const roles = new Map<number, Role>();
+  /**
+   * 살아 있는 포인터의 마지막 캔버스 좌표. 컨텍스트가 바뀔 때 이 좌표로
+   * 배역을 다시 정한다 — 화면에 남아 있는 손가락이 영구 무효가 되면 안 된다.
+   */
+  const lastPoint = new Map<number, TouchTap>();
   /** 지금 눌려 있는 패드. 같은 패드를 두 손가락이 누를 수 있어 카운트로 센다. */
   const downCount = new Map<PadId, number>();
   const pressed = new Set<MetaKey>();
@@ -277,7 +282,8 @@ export function createTouch(opts: TouchOptions): TouchInput {
   }
 
   function markTouch(type: string): void {
-    if (touchSeen || type === 'mouse') return;
+    // 'touch' 만 터치다 — pen 은 정밀 포인터라 터치 UI 로 전환하면 안 된다.
+    if (touchSeen || type !== 'touch') return;
     touchSeen = true;
     opts.onTouchDetected?.();
   }
@@ -286,10 +292,31 @@ export function createTouch(opts: TouchOptions): TouchInput {
     return (downCount.get(id) ?? 0) > 0;
   }
 
+  function inStickZone(x: number, y: number): boolean {
+    return context === 'PLAY' && stickId < 0 && x >= 0 && x <= STICK_ZONE_MAX_X && y >= STICK_ZONE_MIN_Y;
+  }
+
+  /** 손을 댄 자리가 곧 중심이다. 다만 바탕이 화면 밖으로 새어나가지 않게 눌러 담는다. */
+  function grabStick(pointerId: number, x: number, y: number): void {
+    const m = STICK_R + 6;
+    baseX = Math.max(m, Math.min(CANVAS_W - m, x));
+    baseY = Math.max(m, Math.min(CANVAS_H - m, y));
+    dx = 0;
+    dy = 0;
+    stickId = pointerId;
+    roles.set(pointerId, { kind: 'stick' });
+    try {
+      cv.setPointerCapture(pointerId);
+    } catch {
+      // 캡처는 편의 기능이다 — 실패해도 pointerup 은 그대로 온다.
+    }
+  }
+
   const onDown = (ev: Event): void => {
     const e = ev as PointerEvent;
     markTouch(e.pointerType);
     const p = toCanvas(e.clientX, e.clientY);
+    lastPoint.set(e.pointerId, p);
 
     for (const pad of activePads()) {
       if (!hitPad(pad, p.x, p.y)) continue;
@@ -302,32 +329,14 @@ export function createTouch(opts: TouchOptions): TouchInput {
       try {
         cv.setPointerCapture(e.pointerId);
       } catch {
-        // 캡처는 편의 기능이다 — 실패해도 pointerup 은 그대로 온다.
+        // 위와 같음
       }
       return;
     }
 
-    if (
-      context === 'PLAY' &&
-      stickId < 0 &&
-      p.x >= 0 &&
-      p.x <= STICK_ZONE_MAX_X &&
-      p.y >= STICK_ZONE_MIN_Y
-    ) {
+    if (inStickZone(p.x, p.y)) {
       e.preventDefault();
-      // 손을 댄 자리가 곧 중심이다. 다만 바탕이 화면 밖으로 새어나가지 않게 눌러 담는다.
-      const m = STICK_R + 6;
-      baseX = Math.max(m, Math.min(CANVAS_W - m, p.x));
-      baseY = Math.max(m, Math.min(CANVAS_H - m, p.y));
-      dx = 0;
-      dy = 0;
-      stickId = e.pointerId;
-      roles.set(e.pointerId, { kind: 'stick' });
-      try {
-        cv.setPointerCapture(e.pointerId);
-      } catch {
-        /* 위와 같음 */
-      }
+      grabStick(e.pointerId, p.x, p.y);
       return;
     }
 
@@ -339,6 +348,7 @@ export function createTouch(opts: TouchOptions): TouchInput {
     const role = roles.get(e.pointerId);
     if (role === undefined) return;
     const p = toCanvas(e.clientX, e.clientY);
+    lastPoint.set(e.pointerId, p);
     if (role.kind === 'stick') {
       e.preventDefault();
       dx = p.x - baseX;
@@ -357,6 +367,7 @@ export function createTouch(opts: TouchOptions): TouchInput {
 
   const release = (pointerId: number, canceled: boolean): void => {
     const role = roles.get(pointerId);
+    lastPoint.delete(pointerId);
     if (role === undefined) return;
     roles.delete(pointerId);
     if (role.kind === 'stick') {
@@ -399,12 +410,46 @@ export function createTouch(opts: TouchOptions): TouchInput {
       }
     }
     roles.clear();
+    lastPoint.clear();
     downCount.clear();
     stickId = -1;
     dx = 0;
     dy = 0;
     baseX = STICK_HOME_X;
     baseY = STICK_HOME_Y;
+  };
+
+  /**
+   * 컨텍스트가 바뀐 뒤에도 화면에 남아 있는 손가락에게 새 묶음 기준의 배역을 다시 준다.
+   *
+   * - 스틱 존(PLAY): 마지막 좌표에서 새로 잡은 것처럼 스틱을 grab 한다 — 스틱을 잡은 채
+   *   묶음이 스쳐 지나가도(루프 전환 등) 이동이 끊기지 않는다.
+   * - 패드 위: 홀드가 전환을 살아 넘으면 오발이 된다(원래 clearHeldPointers 의 의도).
+   *   패드 배역·엣지는 **새 down 부터만** 유효하다 — 탭 배역으로 강등한다.
+   * - 그 외: 탭 배역. 단 `ok:false` — 전환 전 정황으로 시작한 손가락이 유령 탭을
+   *   만들면 안 된다.
+   */
+  const rebindPointers = (): void => {
+    const survivors: [number, TouchTap][] = [];
+    for (const pointerId of roles.keys()) {
+      const p = lastPoint.get(pointerId);
+      if (p !== undefined) survivors.push([pointerId, p]);
+    }
+    roles.clear();
+    downCount.clear();
+    stickId = -1;
+    dx = 0;
+    dy = 0;
+    baseX = STICK_HOME_X;
+    baseY = STICK_HOME_Y;
+    for (const [pointerId, p] of survivors) {
+      const onPad = activePads().some((pad) => hitPad(pad, p.x, p.y));
+      if (!onPad && inStickZone(p.x, p.y)) {
+        grabStick(pointerId, p.x, p.y);
+        continue;
+      }
+      roles.set(pointerId, { kind: 'tap', x: p.x, y: p.y, ok: false });
+    }
   };
 
   /** 포커스/페이지 경계를 넘는 입력은 엣지와 탭까지 함께 버린다. */
@@ -447,7 +492,9 @@ export function createTouch(opts: TouchOptions): TouchInput {
     },
 
     flush(): void {
+      // 동결 직전에 쌓인 입력이 언블록 첫 틱에 터지면 안 된다 — 엣지와 탭을 함께 버린다.
       pressed.clear();
+      taps.length = 0;
     },
 
     destroy(): void {
@@ -468,9 +515,11 @@ export function createTouch(opts: TouchOptions): TouchInput {
     setContext(c: TouchContext): void {
       if (c === context) return;
       context = c;
-      // 묶음이 바뀌면 붙잡고 있던 패드는 의미가 없다. 손가락 상태만 비우고
-      // 엣지 큐는 남긴다 — PICK 을 여는 Q 엣지가 여기서 사라지면 안 된다.
-      clearHeldPointers();
+      // 묶음이 바뀌면 붙잡고 있던 패드는 의미가 없다 — 홀드는 끊는다. 하지만 손가락
+      // 자체는 아직 화면에 있으니 죽이지 않고 새 묶음 기준으로 배역만 다시 준다
+      // (스틱 존이면 그 자리에서 스틱 grab). 엣지 큐는 남긴다 — PICK 을 여는
+      // Q 엣지가 여기서 사라지면 안 된다.
+      rebindPointers();
     },
 
     consumeTaps(): TouchTap[] {

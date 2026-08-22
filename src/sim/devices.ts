@@ -13,6 +13,7 @@ import {
   CCTV_RANGE,
   CRATE_SUB,
   DIR_STEPS,
+  GUARD_KINDS,
   TILE_SUB,
 } from './constants';
 import {
@@ -425,12 +426,20 @@ export function updateCctvs(s: SimState, blockers: readonly Rect[]): boolean {
     alerted = true;
     for (let g = 0; g < s.guards.length; g++) {
       const guard = s.guards[g]!;
+      // 감지(detect) 경로와 같은 예외: 추격할 수 없는 유형(WATCHER)과 눈뽕
+      // 중(dazed)인 경비는 알람으로도 CHASE 에 넣지 않는다. 넣으면 resolveCapture
+      // 가 "CHASE + 겹침"만 보므로, 시야 밖에서 겹쳐 있던 몸이 미목격 즉시 체포된다.
+      const spec = GUARD_KINDS[guard.kind];
+      if (!spec.canChase || guard.dazed > 0) continue;
       guard.state = 'CHASE';
       guard.detect = 100;
       guard.targetX = seenX;
       guard.targetY = seenY;
       guard.targetBodyId = -1;
       guard.stateTimer = 0;
+      // 추격 지속 시간을 함께 세운다 (guard.ts 의 CHASE 진입과 같은 계약).
+      // 안 세우면 다음 틱 guard.updateOne 이 chaseTimer 0 → -1 로 곧장 강등한다.
+      guard.chaseTimer = spec.chasePersist;
     }
   }
   return alerted;

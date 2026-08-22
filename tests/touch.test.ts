@@ -79,11 +79,12 @@ function pointer(
   pointerId: number,
   clientX: number,
   clientY: number,
+  pointerType: 'touch' | 'pen' | 'mouse' = 'touch',
 ): Event {
   const e = new Event(type, { cancelable: true });
   Object.defineProperties(e, {
     pointerId: { value: pointerId },
-    pointerType: { value: 'touch' },
+    pointerType: { value: pointerType },
     clientX: { value: clientX },
     clientY: { value: clientY },
   });
@@ -212,6 +213,117 @@ describe('터치: Safari 페이지 복귀', () => {
     canvas.dispatchEvent(pointer('pointermove', 8, 60, 450));
     assert.notEqual(touch.mask() & MOVE_BITS, 0, '복귀 후 새 조이스틱 입력은 즉시 받는다');
 
+    touch.destroy();
+  });
+});
+
+describe('터치: 컨텍스트 전환이 살아 있는 손가락을 죽이지 않는다', () => {
+  function make(): { canvas: FakeCanvas; touch: ReturnType<typeof createTouch> } {
+    const canvas = new FakeCanvas();
+    const touch = createTouch({ canvas: canvas as unknown as HTMLCanvasElement });
+    return { canvas, touch };
+  }
+
+  it('스틱을 잡은 채 묶음이 바뀌어도, PLAY 로 돌아오면 그 자리에서 다시 잡는다', () => {
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    canvas.dispatchEvent(pointer('pointerdown', 3, 120, 450));
+    canvas.dispatchEvent(pointer('pointermove', 3, 180, 450));
+    assert.notEqual(touch.mask() & MOVE_BITS, 0, '전환 전에는 이동이 살아 있다');
+
+    // 루프 전환 등으로 잠깐 묶음이 사라졌다가 돌아온다.
+    touch.setContext('NONE');
+    touch.setContext('PLAY');
+
+    canvas.dispatchEvent(pointer('pointermove', 3, 240, 450));
+    assert.notEqual(
+      touch.mask() & MOVE_BITS,
+      0,
+      '전환을 넘긴 손가락의 이동이 무시된다 (held-pointer wipe)',
+    );
+    touch.destroy();
+  });
+
+  it('TITLE(NONE)에서 스틱 존에 올려 둔 엄지는 PLAY 진입과 함께 스틱이 된다', () => {
+    const { canvas, touch } = make();
+    // 초기 컨텍스트는 NONE — 이 손가락은 지금은 탭 후보일 뿐이다.
+    canvas.dispatchEvent(pointer('pointerdown', 5, 200, 400));
+    touch.setContext('PLAY');
+    canvas.dispatchEvent(pointer('pointermove', 5, 260, 400));
+    assert.notEqual(touch.mask() & MOVE_BITS, 0, 'PLAY 진입 후 드래그가 무반응이다');
+    assert.equal(touch.view().stickActive, true);
+    touch.destroy();
+  });
+
+  it('패드 홀드는 전환을 넘지 못한다 — 새 down 부터만 유효 (오발 방지 의도 유지)', () => {
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    const e = TOUCH_PADS.find((p) => p.id === 'INTERACT')!;
+    canvas.dispatchEvent(pointer('pointerdown', 6, e.cx, e.cy));
+    assert.notEqual(touch.mask() & IN_INTERACT, 0, '전환 전 E 홀드가 잡히지 않았다');
+
+    touch.setContext('NONE');
+    touch.setContext('PLAY');
+
+    assert.equal(touch.mask() & IN_INTERACT, 0, '패드 홀드가 전환을 살아 넘었다');
+    assert.equal(touch.view().down.length, 0, '전환 후에도 패드가 눌린 것으로 남았다');
+    // 손을 떼도 전환 전 정황으로 유령 탭을 만들지 않는다.
+    canvas.dispatchEvent(pointer('pointerup', 6, e.cx, e.cy));
+    assert.deepEqual(touch.consumeTaps(), []);
+    touch.destroy();
+  });
+
+  it('전환 후 손가락이 새 묶음의 패드 위에 있어도 눌린 것으로 치지 않는다', () => {
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    // (400, 300) 은 PLAY 에서는 스틱 존, PICK 에서는 SLOT2 사각형 위다.
+    canvas.dispatchEvent(pointer('pointerdown', 8, 400, 300));
+    touch.setContext('PICK');
+    assert.equal(touch.consumePressed('SLOT2'), false, '전환이 슬롯 엣지를 위조했다');
+    assert.equal(touch.view().down.length, 0, '전환이 슬롯을 눌린 상태로 만들었다');
+    touch.destroy();
+  });
+
+  it('전환 전에 낸 메타 엣지는 남는다 — PICK 을 여는 Q 엣지 규칙', () => {
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    const q = TOUCH_PADS.find((p) => p.id === 'OVERWRITE')!;
+    canvas.dispatchEvent(pointer('pointerdown', 7, q.cx, q.cy));
+    touch.setContext('PICK');
+    assert.equal(touch.consumePressed('OVERWRITE'), true, 'Q 엣지가 전환에서 사라졌다');
+    touch.destroy();
+  });
+});
+
+describe('터치: flush 는 엣지와 탭을 모두 버린다', () => {
+  it('동결 직전의 탭이 언블록 첫 틱에 발화하지 않는다', () => {
+    const canvas = new FakeCanvas();
+    const touch = createTouch({ canvas: canvas as unknown as HTMLCanvasElement });
+    // NONE 컨텍스트: 패드가 없으므로 다운→업이 탭으로 흘러든다.
+    canvas.dispatchEvent(pointer('pointerdown', 11, 480, 300));
+    canvas.dispatchEvent(pointer('pointerup', 11, 480, 300));
+    touch.flush();
+    assert.deepEqual(touch.consumeTaps(), [], 'flush 뒤에도 탭이 큐에 남아 있다');
+    touch.destroy();
+  });
+});
+
+describe('터치: pointerType 판정', () => {
+  it("pen 은 터치 기기 판정을 만들지 않는다 — 'touch' 만 터치다", () => {
+    const canvas = new FakeCanvas();
+    let detected = 0;
+    const touch = createTouch({
+      canvas: canvas as unknown as HTMLCanvasElement,
+      onTouchDetected: () => {
+        detected += 1;
+      },
+    });
+    canvas.dispatchEvent(pointer('pointerdown', 21, 480, 300, 'pen'));
+    assert.equal(touch.isTouch(), false, 'pen 이 터치로 판정됐다');
+    assert.equal(detected, 0, 'pen 에서 onTouchDetected 가 불렸다');
+    canvas.dispatchEvent(pointer('pointerdown', 22, 481, 300, 'touch'));
+    assert.equal(touch.isTouch(), true, '실제 touch 가 터치로 판정되지 않았다');
+    assert.equal(detected, 1);
     touch.destroy();
   });
 });

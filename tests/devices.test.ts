@@ -15,8 +15,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  BODY_SUB,
+  CCTV_LOCK_TICKS,
   GRATE_NOISE_INTERVAL,
   GRATE_NOISE_RADIUS,
+  GUARD_KINDS,
   IN_DOWN,
   IN_INTERACT,
   IN_RIGHT,
@@ -743,9 +746,17 @@ function legacyRun(
  *      같은 도구에서 SENTRY/BRUTE/WATCHER 는 추격·체포가 걸리는 배치에서도 동일했고
  *      HOUND 만 달라졌다 — 즉 이 배열이 움직인 이유는 해시가 궤적·눈뽕·dazed 를
  *      새로 덮기 때문이지 기존 경로가 바뀌어서가 아니다.
+ *
+ * 재기준선 (CCTV 알람 chaseTimer 수정): 알람이 경비를 CHASE 로 만들 때 chaseTimer 를
+ * 세우지 않던 버그를 고치면서 **알람 이후의 경비 궤적만** 의도적으로 달라졌다
+ * (수정 전에는 알람 다음 틱에 곧장 INVESTIGATE 로 강등됐다). 근거:
+ *   ① 이 시나리오의 알람은 틱 229 에 울린다 — 그 앞의 표본(틱 50·100·150·200)
+ *      네 칸은 수정 전과 **완전히 동일**하고, 알람 뒤의 두 칸(틱 250·300)만 움직였다.
+ *   ② 꼬리 두 칸(CAPTURED=1 · 알람 2)은 그대로다 — 결말이 아니라 추격의 경로만 바뀌었다.
+ *   ③ 알람이 아예 없는 GOLDEN_RANDOM 은 한 칸도 변하지 않았다.
  */
 const GOLDEN_SCRIPTED = [
-  2953203601, 2274205597, 2811272739, 3410525751, 169724092, 2281099580, 1, 2,
+  2953203601, 2274205597, 2811272739, 3410525751, 593599818, 1678274200, 1, 2,
 ];
 const GOLDEN_RANDOM = [
   3830199066, 2543638844, 106651318, 892514971, 763708128, 2713705673, 0, 0,
@@ -790,5 +801,137 @@ describe('무영향 보증 — 장치를 쓰지 않는 레벨', () => {
     assert.equal(NOISE_RADIUS, 160 * 256);
     assert.equal(IN_INTERACT, 16);
     assert.equal(L | R | U | D, 15);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 7. CCTV 알람 → 경비 추격 전환 (QA 9부 · 판정 근거: chaseTimer 미설정 회귀)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 알람은 경비를 CHASE 로 만들 때 **감지(detect) 경로와 같은 계약**을 지켜야 한다:
+// ① chaseTimer 를 유형별 chasePersist 로 세워 다음 틱에 곧장 강등되지 않는다.
+// ② 추격할 수 없는 유형(WATCHER)과 눈뽕 중(dazed)인 경비는 CHASE 에 넣지 않는다 —
+//    넣으면 resolveCapture 가 시야 밖에서 겹쳐 있던 몸을 "미목격 즉시 체포"한다.
+
+/** CCTV 가 스폰을 정면으로 보고, 경비는 사거리 밖에서 반대쪽을 본다. */
+const LV_ALARM: LevelDef = {
+  id: 'T_ALARM',
+  name: 'ALARM',
+  par: 1,
+  hint: '',
+  tiles: [
+    '################',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '################',
+  ].map((row, i) => (i === 2 ? '#........S.....#' : row)),
+  guards: [{ path: [{ tx: 2, ty: 6 }], waitTicks: 9999, facing: 32 }],
+  cctvs: [{ tx: 7, ty: 2, baseFacing: 0, sweepArc: 0, sweepTicks: 1000, phase: 0 }],
+  loot: { tx: 14, ty: 6 },
+  escape: { tx: 14, ty: 1 },
+};
+
+/** 같은 배치, 경비만 WATCHER. */
+const LV_ALARM_WATCHER: LevelDef = {
+  ...LV_ALARM,
+  id: 'T_ALARM_W',
+  guards: [{ path: [{ tx: 2, ty: 6 }], waitTicks: 9999, facing: 32, kind: 'WATCHER' }],
+};
+
+/**
+ * 눈뽕 케이스: CCTV 는 스폰에 정지한 잔상을 계속 본다(45틱마다 알람).
+ * 살아 있는 나는 CCTV·경비 시야 밖으로 걸어가 dazed 경비 위에 겹쳐 선다.
+ */
+const LV_ALARM_DAZED: LevelDef = {
+  ...LV_ALARM,
+  id: 'T_ALARM_D',
+  tiles: [
+    '################',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '#..............#',
+    '################',
+  ].map((row, i) => (i === 2 ? '#........S.....#' : row)),
+  guards: [{ path: [{ tx: 3, ty: 5 }], waitTicks: 9999, facing: 32 }],
+  cctvs: [{ tx: 7, ty: 2, baseFacing: 0, sweepArc: 0, sweepTicks: 1000, phase: 0 }],
+};
+
+/** 알람이 울린 틱(ev.alerted)까지 굴리고 그 틱 번호를 돌려준다. */
+function stepUntilAlarm(sim: SimState, maxTicks: number): number {
+  for (let t = 0; t < maxTicks; t++) {
+    if (stepWorld(sim, 0).alerted) return t;
+  }
+  return -1;
+}
+
+describe('CCTV 알람 — 경비 전환 계약', () => {
+  it('알람으로 들어간 CHASE 는 chaseTimer 가 세워져 다음 틱에 강등되지 않는다', () => {
+    const sim = createWorld(LV_ALARM, []);
+    const alarmTick = stepUntilAlarm(sim, 200);
+    assert.equal(alarmTick, CCTV_LOCK_TICKS - 1, '알람이 예정 틱에 울리지 않았다');
+
+    const g = sim.guards[0]!;
+    assert.equal(g.state, 'CHASE', '알람이 경비를 추격으로 전환하지 않았다');
+    assert.equal(
+      g.chaseTimer,
+      GUARD_KINDS.SENTRY.chasePersist,
+      '알람이 추격 지속 시간을 세우지 않았다',
+    );
+
+    // 대상이 시야에 없어도 chasePersist 동안은 추격이 유지되어야 한다.
+    for (let t = 0; t < 30; t++) {
+      stepWorld(sim, 0);
+      assert.equal(g.state, 'CHASE', `알람 +${t + 1}틱에 추격이 강등됐다`);
+    }
+  });
+
+  it('WATCHER 는 알람으로도 CHASE 에 들어가지 않는다 (감지 경로와 동일)', () => {
+    const sim = createWorld(LV_ALARM_WATCHER, []);
+    const alarmTick = stepUntilAlarm(sim, 200);
+    assert.equal(alarmTick, CCTV_LOCK_TICKS - 1);
+    assert.notEqual(sim.guards[0]!.state, 'CHASE', 'WATCHER 가 추격 상태가 됐다');
+    // 다음 알람까지 더 굴려도 마찬가지다.
+    for (let t = 0; t < 60; t++) {
+      stepWorld(sim, 0);
+      assert.notEqual(sim.guards[0]!.state, 'CHASE');
+    }
+  });
+
+  it('dazed 경비 위에 숨어 있던 몸이 알람 틱에 미목격 즉시 체포되지 않는다', () => {
+    const sim = createWorld(LV_ALARM_DAZED, [
+      // 빈 테이프 잔상 — 스폰에 정지한 채 CCTV 락을 계속 채워 알람을 반복시킨다.
+      { tape: new Uint16Array(0), corpse: false },
+    ]);
+    // 눈뽕에 맞은 상태를 그대로 만든다 (applyFlash 의 결과 필드).
+    sim.guards[0]!.dazed = 100000;
+
+    // 나: 스폰 (9,2) → 왼쪽 6타일 → 아래 3타일 = dazed 경비 (3,5) 위에 겹쳐 선다.
+    const walk = tape([seg(L, tiles(6)), seg(D, tiles(3))]);
+    let overlapped = false;
+    for (let t = 0; t < 400; t++) {
+      stepWorld(sim, t < walk.length ? walk[t]! : 0);
+      const me = sim.bodies.find((b) => b.isLive)!;
+      const g = sim.guards[0]!;
+      if (
+        g.x < me.x + BODY_SUB &&
+        me.x < g.x + g.sizeSub &&
+        g.y < me.y + BODY_SUB &&
+        me.y < g.y + g.sizeSub
+      ) {
+        overlapped = true;
+      }
+      assert.notEqual(g.state, 'CHASE', `틱 ${t}: dazed 경비가 추격 상태가 됐다`);
+    }
+
+    assert.equal(overlapped, true, '시나리오 전제가 깨졌다 — 몸이 경비와 겹치지 않았다');
+    assert.ok(sim.alerts >= 2, '시나리오 전제가 깨졌다 — 알람이 반복되지 않았다');
+    assert.equal(sim.outcome, 'RUNNING', '보지도 못한 경비가 몸을 체포했다');
   });
 });

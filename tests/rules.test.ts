@@ -246,6 +246,88 @@ describe('§3-2 덮어쓰기는 스테이지당 1회', () => {
   });
 });
 
+// ── 4-2. 슬롯 선택 메뉴는 강제 확정을 넘어 살아남지 않는다 (QA 9부 #2) ─────
+
+describe('§3-2 Q 슬롯 선택 중 강제 확정이 오면 메뉴는 닫히고 횟수는 보존된다', () => {
+  it('선택 중 TIMEUP → 다음 루프에서 플래그 OFF · 1/2/3 이 덮어쓰기를 오소모하지 않는다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    commitLoopOfLength(s, 20); // 잔상 1 — 덮어쓰기 메뉴의 전제
+    assert.equal(s.ghosts.length, 1);
+
+    beginOverwriteMode(s);
+    assert.equal(s.awaitingOverwritePick, true);
+    assert.equal(s.overwriteLeft, 1);
+
+    // 선택 중에는 main.ts 가 마스크 0 을 먹인다 — 그대로 시간이 다 흐르면 TIMEUP 이
+    // tickSession 안에서 commitLoop(s, 'TIMEUP') 를 강제한다.
+    let fuel = MAX_TICKS + 60;
+    while (s.phase === 'PLAY' && fuel-- > 0) tickSession(s, 0);
+    assert.equal(s.phase, 'TRANSITION', 'TIMEUP 강제 확정이 일어나지 않았다');
+
+    assert.equal(s.awaitingOverwritePick, false, '선택 메뉴가 다음 루프로 누출된다');
+    assert.equal(s.overwriteLeft, 1, '강제 확정이 덮어쓰기 횟수를 건드렸다');
+
+    // 새 루프에서 1(SLOT1 경로)을 눌러도 1회뿐인 덮어쓰기가 소모되면 안 된다.
+    for (let i = 0; i < LOOP_TRANSITION_TICKS; i++) tickSession(s, 0);
+    assert.equal(s.phase, 'PLAY');
+    assert.equal(requestOverwrite(s, 1), false, '닫혔어야 할 메뉴가 슬롯 선택을 받았다');
+    assert.equal(s.overwriteLeft, 1, '1회뿐인 덮어쓰기가 오소모됐다');
+  });
+
+  it('선택 중 체포(CAPTURED) 강제 확정도 같다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    commitLoopOfLength(s, 20);
+    beginOverwriteMode(s);
+    assert.equal(s.awaitingOverwritePick, true);
+
+    // tickSession 의 CAPTURED 분기가 부르는 그 호출을 그대로 부른다.
+    commitLoop(s, 'CAPTURED');
+    assert.equal(s.awaitingOverwritePick, false, '선택 메뉴가 확정을 넘어 살아남았다');
+    assert.equal(s.overwriteLeft, 1);
+    assert.equal(s.phase, 'TRANSITION');
+  });
+});
+
+// ── 4-3. 루프 전환과 입력 (판정 j1_060 조사 — 의도된 설계의 경계 문서화) ────
+//
+// 전환 배너가 떠 있는 LOOP_TRANSITION_TICKS(90틱 = 1.5초) 동안 세계는 얼어 있고
+// 입력은 어디에도 닿지 않는다 — 이것은 의도된 설계다(월드가 틱 0 으로 재생성되기
+// 직전이라 적용할 시뮬 자체가 없다). 대신 **전환 너머의 드랍은 0틱**이어야 한다:
+// 키를 계속 붙잡고 있었다면 새 루프의 첫 틱부터 그 마스크가 적용·녹화된다.
+
+describe('루프 전환 — 전환 중 입력 차단은 정확히 90틱이고 그 너머 드랍은 0틱이다', () => {
+  it('TRANSITION 동안은 어떤 마스크도 시뮬·테이프에 닿지 않는다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    for (let i = 0; i < 10; i++) tickSession(s, 0);
+    commitLoop(s, 'MANUAL');
+    assert.equal(s.phase, 'TRANSITION');
+
+    // main.ts 는 0 을 보내지만, 설령 마스크가 흘러들어도 닿는 경로가 없어야 한다.
+    for (let i = 0; i < LOOP_TRANSITION_TICKS; i++) tickSession(s, D);
+    assert.equal(s.phase, 'PLAY', '전환이 정확히 LOOP_TRANSITION_TICKS 에 끝나지 않았다');
+    assert.equal(s.sim.tick, 0, '전환 중에 새 월드가 굴렀다');
+    assert.equal(s.recording.length, 0, '전환 중 입력이 녹화됐다');
+  });
+
+  it('전환 내내 붙잡고 있던 이동키는 새 루프 틱 0 부터 즉시 적용·녹화된다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    for (let i = 0; i < 10; i++) tickSession(s, 0);
+    commitLoop(s, 'MANUAL');
+    for (let i = 0; i < LOOP_TRANSITION_TICKS; i++) tickSession(s, D);
+    assert.equal(s.phase, 'PLAY');
+
+    const before = s.sim.bodies.find((b) => b.isLive)!.y;
+    tickSession(s, D); // 키보드 held 상태는 전환을 살아남는다 (input.ts 의 held 집합)
+    assert.equal(s.recording[0], D, '첫 틱 입력이 테이프 0번 칸에 없다');
+    const after = s.sim.bodies.find((b) => b.isLive)!.y;
+    assert.ok(after > before, '새 루프 첫 틱부터 움직이지 않았다 — 전환 너머 드랍 존재');
+  });
+});
+
 // ── 5. 시체 규칙 (SPEC §3-2, §5.3) ────────────────────────────────────────
 
 describe('§5.3 체포로 확정된 잔상 = 재생 중엔 미끼, 끝나면 시체', () => {
