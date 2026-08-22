@@ -1,5 +1,34 @@
+# 의존성
 node_modules/
+
+# 빌드 결과물
 dist/
+*.tsbuildinfo
+
+# Vite 캐시
+.vite/
+node_modules/.vite/
+
+# 환경 변수 (API 키 등, 절대 커밋 금지)
+.env
+.env.*
+!.env.example
+
+# 에디터 및 IDE 개인 설정
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# AI 도구 로컬 상태
 .omc/
+.serena/
+.claude/settings.local.json
+
+# OS가 만드는 파일
 .DS_Store
+Thumbs.db
+
+# 로그
 *.log
+npm-debug.log*
