@@ -256,7 +256,7 @@ const ALARM_FX_TICKS = 30;
  */
 const BULK_BODY = 1.1;
 /**
- * 간수의 팔·다리 굵기. 덩치의 본체는 여기가 아니라 `topPose({warden:true})` 의
+ * 경비의 팔·다리 굵기. 덩치의 본체는 여기가 아니라 `topPose({warden:true})` 의
  * `shoulderScale`(몸통 28) 과 `headScale`(머리 14) 에서 나온다.
  */
 const BULK_GUARD = 1.2;
@@ -1816,7 +1816,7 @@ function drawCctvs(
         C_CCTV_SCAN,
         // LOCK 가산치가 0.14 → 0.05 로 줄어든 건 약해진 게 아니다. 빔 색이 밝아져
         // 같은 알파에서 화면 밝기가 2.4배로 뛰므로, 예전 마젠타 LOCK 과 **같은 밝기**
-        // (그리고 간수 CHASE 콘보다 살짝 아래)가 되도록 알파를 되맞춘 것이다.
+        // (그리고 경비 CHASE 콘보다 살짝 아래)가 되도록 알파를 되맞춘 것이다.
         locking ? A_CONE_CCTV + 0.05 + Math.sin(view.frame * 0.4) * 0.02 : A_CONE_CCTV,
       );
     }
@@ -2632,7 +2632,7 @@ function drawLive(
   floorTint(ctx, cx, cy, FIG_W, C_I_CORE, 0.34);
   contactShadow(ctx, cx, cy, SHADOW_W, 1);
 
-  // 발밑 시안 링 **하나**. 잔상 셋과 간수 둘이 겹쳐도 바닥에서 조작 중인 몸을 못 박되,
+  // 발밑 시안 링 **하나**. 잔상 셋과 경비 둘이 겹쳐도 바닥에서 조작 중인 몸을 못 박되,
   // 인물 위로는 한 겹도 얹지 않는다 — 동심원을 두 개 겹치면 사람이 아니라 뱃지가 된다.
   // 반지름은 팔 끝(어깨 반폭 11 + 팔 3.5) 밖이라 실루엣을 가로지르지 않는다.
   ctx.strokeStyle = withAlpha(C_I_RING, 0.5);

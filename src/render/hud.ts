@@ -426,7 +426,7 @@ function promptArmed(id: PromptId, s: Session): boolean {
       // 잔상이 있고, par 를 넘겼고, 아직 이 스테이지의 덮어쓰기가 남아 있다.
       return s.ghosts.length >= 1 && s.ghosts.length > s.level.par && s.overwriteLeft > 0;
     case 'RUN':
-      // `spotted` = 이번 루프에 간수/감시안에 발각된 적이 있는가 (sim 이 세우는 깃발).
+      // `spotted` = 이번 루프에 경비/감시안에 발각된 적이 있는가 (sim 이 세우는 깃발).
       return liveBody(s)?.spotted === true;
     case 'TIMEUP':
       return MAX_TICKS - s.sim.tick < TICK_HZ * 10;
@@ -589,7 +589,7 @@ const HELP_GROUPS: readonly HelpGroup[] = [
       {
         keys: ['SHIFT'],
         touchKeys: ['링 밖까지'],
-        line: '달리기 — 발소리가 나고, 간수가 소리를 듣고 찾아온다',
+        line: '달리기 — 발소리가 나고, 경비가 소리를 듣고 찾아온다',
         color: C_DANGER,
       },
     ],
@@ -2039,7 +2039,7 @@ function tapButton(
 // 같은 아트 방향을 따른다: 발광 오버레이가 아니라 **판에 박힌 산업용 조작기**다.
 // 다만 게임 정보를 가리면 안 되므로 판 자체는 반투명하게 깔고 테두리로만 형태를 세운다.
 
-/** 조작 UI 전체 불투명도. 방·잔상·간수를 읽는 데 방해가 되지 않는 선. */
+/** 조작 UI 전체 불투명도. 방·잔상·경비를 읽는 데 방해가 되지 않는 선. */
 const TOUCH_A = 0.62;
 
 /**
@@ -2386,7 +2386,7 @@ function drawDetectRow(
   text(
     ctx,
     mode === 'LISTEN'
-      ? '마이크를 쓴다. 숨소리도 들린다 — 시끄러우면 간수가 온다'
+      ? '마이크를 쓴다. 숨소리도 들린다 — 시끄러우면 경비가 온다'
       : '마이크를 쓰지 않는다. 키보드만으로 플레이한다',
     CANVAS_W / 2,
     ROW2_Y + CHIP_H + 30,
@@ -2956,7 +2956,7 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
 
   const rows: [string, string][] = [
     ['WASD / ARROWS', '이동'],
-    ['SHIFT', '달리기 — 발소리가 나고, 간수(WARDEN)가 소리를 듣고 온다'],
+    ['SHIFT', '달리기 — 발소리가 나고, 경비(WARDEN)가 소리를 듣고 온다'],
     ['E', '버튼 / 레버 상호작용'],
     ['R', '루프 조기 확정 → 지금까지의 나를 잔상으로 남긴다'],
     ['Q → 1/2/3', '잔상 하나를 지우고 다시 녹화 (스테이지당 1회)'],

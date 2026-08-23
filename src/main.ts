@@ -210,7 +210,7 @@ if (touch.isTouch()) {
 
 // ── 세로 모드 게이트 ───────────────────────────────────────────────────────
 // 방 전체를 봐야 퍼즐이 성립하므로 세로 레이아웃은 만들지 않는다. 대신 회전을
-// 안내하고 그동안 **틱을 진행하지 않는다**(안내 화면 뒤에서 간수가 걸어오면 안 된다).
+// 안내하고 그동안 **틱을 진행하지 않는다**(안내 화면 뒤에서 경비가 걸어오면 안 된다).
 
 const rotateEl = document.getElementById('rotate');
 let portraitBlocked = false;
@@ -818,12 +818,12 @@ function pumpMic(): boolean {
   // 게임이 자기 소리를 듣고 스스로를 발각시키는 되먹임이 줄어든다.
   if (p === 'CALIBRATING') audio.calibrationSample(mic.view().calibration);
   // 권한 대기와 환경음 측정 동안에는 세계를 얼린다. 바닥값을 잡기 전에 굴리면
-  // 첫 2초가 그대로 레벨 3 으로 녹화돼 잔상이 영구히 간수를 부른다.
+  // 첫 2초가 그대로 레벨 3 으로 녹화돼 잔상이 영구히 경비를 부른다.
   return p === 'REQUEST' || p === 'CALIBRATING';
 }
 
 function onTick(): void {
-  // 세로 모드에서는 세계를 얼린다. 안내 화면 뒤에서 간수가 걸어오면 안 된다.
+  // 세로 모드에서는 세계를 얼린다. 안내 화면 뒤에서 경비가 걸어오면 안 된다.
   if (portraitBlocked) return;
 
   uiClock++;
@@ -837,7 +837,7 @@ function onTick(): void {
   handleMeta();
 
   // 조작법을 읽는 동안 세계는 멈춘다. 일시정지와 같은 결이다 — 안내를 읽는 사이에
-  // 간수가 걸어오면 그 안내는 함정이 된다. 이 `return` 이 곧 입력 차단이기도 하다:
+  // 경비가 걸어오면 그 안내는 함정이 된다. 이 `return` 이 곧 입력 차단이기도 하다:
   // `tickSession` 이 불리지 않으므로 `input.mask()` 가 시뮬에 닿는 경로가 없다.
   if (session.paused || isHelpOpen()) return;
 
