@@ -41,6 +41,16 @@ const TIGHT_TICKS = Math.floor(MAX_TICKS * TIGHT_RATIO); // 180
 const TOLERANCE_PROBE = 24;
 /** 관용 폭이 이 이하면 "프레임 단위 정밀도" 경고. 6틱 = 0.1초. */
 const TOLERANCE_WARN = 6;
+/**
+ * 한쪽 방향 여유의 하한. 총 폭이 넉넉해도 **한쪽이 좁으면 사람은 못 친다** —
+ * 08_MY 가 -8~+1(폭 10)로 총폭 경고를 통과하면서 실제로는 늦는 쪽 1틱이었던 적이 있다.
+ * 사람 반응 시간이 약 0.2초(12틱)이므로 그 아래를 경고한다.
+ *
+ * 단 par 1 스테이지(01·02)는 테이프가 짧아 음수 방향으로 밀면 **타이밍이 아니라
+ * 첫 이동이 잘려** 실패한다 — 측정 아티팩트이지 난이도가 아니다. 그 둘이 뜨는 것은
+ * 정상이고, 3번 이후의 스테이지가 목록에 오르면 실제 문제다.
+ */
+const EDGE_WARN = 8;
 
 const ALL_KINDS: GuardKind[] = ['SENTRY', 'HOUND', 'BRUTE', 'WATCHER'];
 
@@ -271,6 +281,28 @@ describe('A. 15 스테이지 전수 클리어', () => {
       );
     } else {
       console.log(`  [OK] 관용 폭 ${TOLERANCE_WARN}틱 이하인 스테이지 없음`);
+    }
+  });
+
+  it('손 정밀도 편측 여유 — 한쪽이 좁으면 경고 (실패가 아니다)', () => {
+    const lopsided: string[] = [];
+    for (const { sol, tol } of RESULTS) {
+      const edge = Math.min(Math.abs(tol.lo), tol.hi);
+      if (edge < EDGE_WARN) {
+        lopsided.push(
+          `${sol.level.id}: ${tol.lo}~+${tol.hi}틱 — 좁은 쪽 ${edge}틱 (` +
+            `${((edge / 60) * 1000).toFixed(0)}ms)`,
+        );
+      }
+    }
+    if (lopsided.length > 0) {
+      console.warn(
+        `\n  [경고] 한쪽 방향 여유가 ${EDGE_WARN}틱 미만인 스테이지 —\n` +
+          '         총 폭이 넓어도 그 방향으로는 손이 못 따라간다:\n' +
+          lopsided.map((s) => `    - ${s}`).join('\n'),
+      );
+    } else {
+      console.log(`  [OK] 편측 여유 ${EDGE_WARN}틱 미만인 스테이지 없음`);
     }
   });
 
