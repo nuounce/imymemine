@@ -334,10 +334,13 @@ const STAGE_8: LevelDef = {
   // BRUTE 는 격자방(x11~19) 한가운데를 세로로 오간다. 이 방의 출입구는 (10,6)·(20,6)
   // 둘뿐이고 둘 다 1타일이라, 저 덩치는 방 밖으로 나오지 못한다 — 레버를 누르러
   // 들어간 몸에게 그 두 칸이 유일한 피난처다.
-  // SENTRY 는 금고 안(x21~25)에서 코어(24,2)와 탈출구(24,10) 사이를 훑는다.
+  // SENTRY 는 금고 안(x21~25)을 세로로 훑는다. 순찰을 y3~9 로 한 칸씩 좁히고 대기를
+  // 60틱으로 늘린 것은 **늦는 쪽 여유를 벌기 위한 완화**다 — 이전 배치(y2~10·대기 30)
+  // 에서는 통로를 건너는 창이 늦는 쪽으로 1틱뿐이라 손으로 칠 수 없었다.
+  // 대신 코어(24,2)·탈출구(24,10) 줄의 끝 한 칸은 시야에서 벗어난다.
   guards: [
-    { path: [{ tx: 16, ty: 2 }, { tx: 16, ty: 10 }], waitTicks: 45, facing: 16, kind: 'BRUTE' },
-    { path: [{ tx: 23, ty: 2 }, { tx: 23, ty: 10 }], waitTicks: 30, facing: 16 },
+    { path: [{ tx: 16, ty: 2 }, { tx: 16, ty: 10 }], waitTicks: 30, facing: 16, kind: 'BRUTE' },
+    { path: [{ tx: 23, ty: 3 }, { tx: 23, ty: 9 }], waitTicks: 60, facing: 16 },
   ],
   loot: { tx: 24, ty: 2 },
   escape: { tx: 24, ty: 10 },
@@ -717,7 +720,7 @@ const STAGE_14: LevelDef = {
   //     못 들어온다. 반대로 덩치를 문 가까이 두면 알아채는 즉시 문턱에 눌러앉는다.
   //   · WATCHER 는 금고 안쪽 벽(32,5)에서 북쪽을 본다.
   guards: [
-    { path: [{ tx: 19, ty: 3 }, { tx: 19, ty: 7 }], waitTicks: 40, facing: 16, kind: 'HOUND' },
+    { path: [{ tx: 19, ty: 3 }, { tx: 19, ty: 7 }], waitTicks: 55, facing: 16, kind: 'HOUND' },
     { path: [{ tx: 31, ty: 2 }, { tx: 31, ty: 8 }], waitTicks: 60, facing: 16, kind: 'BRUTE' },
     { path: [{ tx: 32, ty: 5 }], waitTicks: 6000, facing: 48, kind: 'WATCHER' },
   ],

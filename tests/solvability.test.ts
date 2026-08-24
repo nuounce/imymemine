@@ -182,7 +182,7 @@ const S5: Solution = {
       seg(O, 10),
     ]),
     tape([
-      seg(O, S5_START),
+      seg(O, S5_START + 28),
       seg(U, tiles(3)),
       seg(R, tiles(15)),
       seg(O, S5_BUTTON_TICK - S5_START - tiles(18)),
@@ -317,7 +317,7 @@ const S8: Solution = {
     tape([seg(L, tiles(2)), seg(U, tiles(1)), seg(O, 4)]),
     tape([seg(D, tiles(4)), seg(R, tiles(11)), seg(E, 1), seg(O, 4)]),
     tape([
-      seg(O, 270), // 덩치가 남쪽 끝으로 내려가는 창을 기다린다
+      seg(O, 274), // 덩치가 남쪽 끝으로 내려가는 창을 기다린다
       seg(D, tiles(4)),
       seg(R, tiles(21)),
       seg(U, tiles(4)),
@@ -533,7 +533,7 @@ const S13: Solution = {
     tape([seg(L, tiles(2)), seg(U, tiles(2)), seg(O, 4)]),
     tape([seg(O, S13_CLOSE - tiles(4)), seg(L, tiles(2)), seg(D, tiles(2)), seg(O, 4)]),
     tape([
-      seg(O, 200), // 레버가 내려간 뒤에 출발한다
+      seg(O, 219), // 레버가 내려간 뒤에 출발한다
       seg(D, tiles(2)), seg(R, tiles(16)),
       seg(O, S13_CLOSE - 200 - tiles(18)),
       seg(R, tiles(1)), seg(R, tiles(4)),
@@ -611,12 +611,13 @@ const S15: Solution = {
       '문칸(25,6)은 40px 가 못 들어오는 자리라, 코어와 탈출구를 한 번씩 찌르고 그 칸으로 물러난다',
   ],
   loops: [
-    tape([seg(O, S15_DOOR - tiles(4)), seg(L, tiles(2)), seg(U, tiles(2)), seg(O, 4)]),
-    tape([seg(O, S15_DOOR - tiles(5)), seg(L, tiles(2)), seg(D, tiles(3)), seg(O, 4)]),
+    tape([seg(L, tiles(2)), seg(U, tiles(2)), seg(O, 4)]),
+    tape([seg(L, tiles(2)), seg(D, tiles(3)), seg(O, 4)]),
     tape([seg(O, S15_DOOR - tiles(9)), seg(L, tiles(2)), seg(D, tiles(7)), seg(O, 4)]),
     tape([
+      seg(O, 41), // 출발을 늦춰도 되는 여유 — 문은 마지막 발판이 눌리는 순간에만 열린다
       ...S15_HEAD,
-      seg(O, S15_DOOR - S15_RUN),
+      seg(O, S15_DOOR - S15_RUN - 41),
       seg(R, tiles(1)), seg(O, S15_W4), // 문칸(25,6)
       seg(R, tiles(1)), seg(U, tiles(3)), seg(D, tiles(3)), seg(L, tiles(1)), // 코어(26,3)
       seg(O, S15_W5), // 다시 문칸에서 한 박자
