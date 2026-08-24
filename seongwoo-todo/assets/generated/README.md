@@ -26,3 +26,20 @@ The `b-group/` directory contains the complete B1–B11 set. Character sheets ar
 
 The `c-group/` directory contains five 3:2 monochrome manga backgrounds and one 16:10 title
 key visual. `process_b_c.py` reproduces the B-group normalization and C-group export.
+
+## Comic assets
+
+The `comic/` directory contains the 18 monochrome manga panels described in
+`seongwoo-todo/COMIC-PROMPTS.md`: seven intro panels, eight interlude panels, and three
+ending panels. Exact text, tally marks, serial numbers, labels, and connection lines are
+intentionally absent so the game can render them as code overlays.
+
+The generated originals are preserved in `source/` under the same panel names.
+`process_comics.py` center-crops and resizes them to their delivery dimensions.
+
+The `comic+comment/` directory contains ten finished comic pages generated with the built-in
+GPT Image 2 workflow: three intro pages, four two-panel interlude pages, and three ending
+pages. GPT Image 2 composed the hand-inked gutters, speech balloons, thought balloons,
+canonical dialogue, and environmental graphics as a unified manga page. The generated
+originals are preserved in `source/comic-comment-gpt-image-2/`.
+`process_comic_comments.py` creates the 960×600 delivery files from those originals.
