@@ -32,12 +32,15 @@ import {
   runTotals,
   setPlayMode,
   startRun,
+  startStage,
   tickSession,
   toggleHint,
   type Mode,
   type PlayMode,
   type Session,
 } from './game/session';
+import { STAGES } from './game/levels';
+import { load as loadSprites } from './render/sprites';
 import {
   drawCalibration,
   drawClear,
@@ -118,6 +121,10 @@ if (ctx === null) {
 }
 const g = ctx as CanvasRenderingContext2D;
 g.imageSmoothingEnabled = false;
+
+// 스프라이트는 **기다리지 않는다.** 준비되기 전 프레임은 기존 코드 드로잉이
+// 그대로 채우므로 빈 화면도 깨진 이미지 아이콘도 뜨지 않는다.
+loadSprites();
 
 /**
  * devicePixelRatio 상한. 모바일 GPU 에서 백버퍼를 무제한으로 곱하면
@@ -1278,6 +1285,19 @@ if (import.meta.env.DEV) {
     /** interludeShow 로 얼린 막간을 다시 굴린다. */
     interludePlay(): void {
       interludeFrozen = false;
+    },
+
+    /**
+     * 스테이지 `index`(0-based)로 곧장 넘어간다. 런 누적치는 유지한다.
+     *
+     * 뒤쪽 스테이지의 장치(소음 바닥·레이저·전력 버스·눈뽕)를 화면으로 확인하려면
+     * 앞 스테이지를 전부 깨야 해서 QA 가 사실상 불가능했다. 판정에는 관여하지
+     * 않는 이동일 뿐이고, 이 훅 전체가 프로덕션 번들에서 제거된다.
+     */
+    stage(index: number): void {
+      const n = Number.isFinite(index) ? Math.trunc(index) : 0;
+      startStage(session, Math.max(0, Math.min(STAGES.length - 1, n)));
+      session.phase = 'PLAY';
     },
 
     /** n 틱 대기(마스크 0)를 큐 뒤에 붙인다. */
