@@ -125,7 +125,7 @@ WebAudio 오실레이터 합성이다(외부 이미지·폰트·오디오 파일
 |---|---|---|---|---|
 | 1 | `01_I` **THE CELL** | 1 | 발판 · 게이트 | 발판을 밟은 채로 나를 남기면, 그 문은 계속 열려 있다 (코어 아하) |
 | 2 | `02_I` **THE CLOCK** | 1 | 시간차 버튼 | 잔상은 **자리**가 아니라 **순간**을 맡을 수도 있다 |
-| 3 | `03_I` **THE WEIGHT** | 1 | 상자 · 경비 | 발판은 무게만 묻는다. 상자 하나가 한 몸을 대신한다 |
+| 3 | `03_I` **THE WEIGHT** | 1 | 상자 | 발판은 무게만 묻는다. 상자 하나가 한 몸을 대신한다 |
 | 4 | `04_I` **THE ANTECHAMBER** | 2 | 잠긴 문 뒤의 발판 | 두 번째 나는 **첫 번째 나가 연 문으로만** 들어간다 — 잔상에 순서가 생긴다 |
 
 ### 2막 감시 (MY) — 경비 · CCTV · 레버 + **grate**
@@ -164,6 +164,24 @@ WebAudio 오실레이터 합성이다(외부 이미지·폰트·오디오 파일
 | **seqButton** (순차 버튼) | 그룹 안에서 정해진 순서로만 진행. **한 번 틀리면 그룹이 0으로 리셋**(지나간 번호 재입력도 오류) | **순서는 자원이고 되돌릴 수 없다.** 순서를 밟으려면 문을 잡아 줄 몸이 먼저 필요하다 |
 | **laser** (주기 레이저) | `periodTicks` 주기로 `onTicks` 만큼 켜진다. 위상만으로 결정 — 난수도 부동소수도 없다. 켜진 빔에 닿으면 경비 체포와 동일 처리 | **예측 가능성은 난이도가 아니라 계획이다.** 외우는 게 아니라 통과할 시각을 고른다 |
 | **powerBus** (전력 채널) | 한 버스에서 동시에 ON 일 수 있는 채널은 **하나뿐**. 새로 켜진 쪽이 전력을 가져간다 | **강제 트레이드오프.** 문과 눈을 동시에 가질 수 없으니, 몸이 아니라 **시간**으로 나눈다 |
+
+---
+
+### 경비 4종 — 각각 무엇으로 위협하는가
+
+전부 같은 코드로 돈다. `src/sim/guard.ts` 에는 `if (kind === 'BRUTE')` 같은 유형 분기가
+**하나도 없고**, 차이는 전부 `GUARD_KINDS` 의 수치다. BRUTE 가 좁은 길에 못 들어오는 것도
+예외 규칙이 아니라 40px 박스가 32px 통로에 안 들어가는 **충돌 판정의 결과**다.
+
+| 유형 | 크기 | 특징 | 대응 |
+|---|---|---|---|
+| **SENTRY** | 26px | 고개를 크게 스윕한다(±8 ≈ ±45°). "정면만 피하면 된다"가 통하지 않는다 | 시야에 안 걸리는 **시각**을 고른다 |
+| **HOUND** | 24px | 유일하게 **냄새를 쫓고** 고개를 빨리 돌린다. 추적 지속 300틱 | 소음을 다른 쪽에 만들어 **먼저 보낸다** |
+| **BRUTE** | 40px | 크고 느리다(순찰 256/틱). **1타일 통로에 못 들어온다** | 좁은 길이 곧 피난처다 |
+| **WATCHER** | 28px | 순찰 속도 0 — 제자리에서 두리번거리기만. 유일하게 **알람을 올린다** | 시야 밖으로 우회하거나 눈뽕으로 잠깐 끊는다 |
+
+경비는 스테이지 5(`05_MY`)부터 나온다. 1막(1~4)에는 한 명도 없다 — 잔상의 문법을
+배우는 방에 감시를 붙이면 아하가 아니라 회피 연습이 되기 때문이다.
 
 ---
 
@@ -397,8 +415,8 @@ npm run preview
 npm test         # node --test --import tsx tests/*.test.ts
 ```
 
-현재 **386개 테스트 / 98개 스위트 전부 통과, 실패 0**(2026-08-21 작업 트리에서 `npm test` 실측 —
-아래 표의 8파일 외에 경비 유형·하운드·보스·아이템 등 이후 추가된 스위트를 포함한 수치다).
+현재 **398개 테스트 / 99개 스위트 전부 통과, 실패 0**(2026-08-25 커밋된 트리에서 `npm test` 실측).
+아래 표는 대표 스위트만 추린 것이고, 이 밖에 경비 유형·하운드·아이템·구조 지원 스위트가 더 있다.
 
 | 파일 | 무엇을 증명하는가 |
 |---|---|
@@ -488,9 +506,24 @@ src/
     intro.ts         7칸 3페이지 만화 인트로
     hud.ts           HUD · 타이틀 · 전환 · 클리어 · 런 결과 오버레이
 tests/
-  determinism.test.ts  devices.test.ts  mic.test.ts     modes.test.ts
-  movement.test.ts     rules.test.ts    solvability.test.ts  whisper.test.ts
+  determinism.test.ts  devices.test.ts   ending.test.ts   flash.test.ts
+  guards.test.ts       hound.test.ts     intro.test.ts    mic.test.ts
+  modes.test.ts        movement.test.ts  notes.test.ts    qa.test.ts
+  rescue.test.ts       rules.test.ts     solvability.test.ts
+  soundscape.test.ts   touch.test.ts     whisper.test.ts
 .github/workflows/deploy.yml   verify(tsc+test) → build(+훅 유출 검사) → Pages
 ```
 
-상세 설계는 [`SPEC.md`](./SPEC.md) 를 보라.
+---
+
+## 문서
+
+| 문서 | 무엇이 들어 있는가 |
+|---|---|
+| [`SPEC.md`](./SPEC.md) | 상세 설계. 결정론 규칙, 틱 파이프라인, 장치 사양 |
+| [`PLAYER-GUIDE.md`](./PLAYER-GUIDE.md) | 플레이어용 공략집. 스테이지별 몸 배정 |
+| [`WALKTHROUGH.md`](./WALKTHROUGH.md) | 15스테이지 정답 테이프와 틱 단위 실측 |
+| [`QA_REPORT.md`](./QA_REPORT.md) | 전수 검수 결과와 개선 백로그 |
+| [`BALANCE_REVIEW.md`](./BALANCE_REVIEW.md) | 스테이지별 난이도 진단 |
+| [`STORY.md`](./STORY.md) · [`PRD.md`](./PRD.md) · [`PITCH.md`](./PITCH.md) | 서사 · 제품 정의 · 발표 문안 |
+| [`AGENTS.md`](./AGENTS.md) | 팀 협업 규칙 (AI 코딩 도구 포함) |
