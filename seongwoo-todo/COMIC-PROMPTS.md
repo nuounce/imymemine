@@ -1,6 +1,6 @@
 # 만화 페이지 생성 프롬프트 v2 — 대사 포함 페이지 단위
 
-> **이 문서의 용도**: 만화 페이지 10장(인트로 3 · 막간 4 · 엔딩 3)의 GPT 이미지 생성
+> **이 문서의 용도**: 만화 페이지 11장(인트로 3 · 막간 4 · 엔딩 3 · 크레딧 1)의 GPT 이미지 생성
 > 프롬프트. 장면·대사의 정본은 [`COMIC-SCRIPT.md`](./COMIC-SCRIPT.md)이고, 이 문서는
 > 그것을 생성 프롬프트로 옮긴 것이다.
 >
@@ -8,8 +8,11 @@
 > 결과(`comic-comment-gpt-image-2/`) **대사를 말풍선째 이미지에 굽는 페이지 단위 생성의
 > 한글 렌더링 품질이 충분히 좋았으므로**, v2는 그 검증된 방식을 따른다. 컷 배치·풍선까지
 > 프롬프트가 지정한다. 대사는 아래 자구를 **한 글자도 바꾸지 말고** 넣는다
-> (2026-08-24 확정본 — 검수 2회 통과, 화면 용어 `수율`→`회수` 결정 반영).
-> 엔딩 3장만 예외로 **무자막**(게임이 엔딩 텍스트를 위에 얹는다).
+> (2026-08-24 확정본 — 검수 2회 통과, 화면 용어 `수율`→`회수` 결정 반영.
+> 엔딩 대사는 2026-08-25 신설 — COMIC-DIALOGUE §5).
+> 엔딩 3장은 **풍선 1개씩만** 넣고 하단 1/5을 비운다(게임이 엔딩 텍스트를 얹는다).
+> 크레딧 1장은 **완전 무자막**(크레딧 롤은 코드 스크롤 — 이름이 바뀔 때마다 이미지를
+> 다시 뽑을 수는 없다).
 
 ---
 
@@ -219,44 +222,139 @@ Thought balloon upper-right: "...전부 데리고 나갈 수는 없나."
 [CONTINUITY]
 ```
 
-## 8. END-1 「TOGETHER」 (전면 1컷 · 무자막)
+## 8. END-1 「TOGETHER」 (전면 1컷 · 풍선 1)
 
 ```
 [§0 블록]
-SINGLE full-bleed panel, NO TEXT (the game overlays its ending text in the
-bottom band — keep the bottom fifth visually quiet).
+SINGLE full-bleed panel. Exactly ONE speech balloon, placed in the UPPER
+half — the game overlays its ending text in the bottom band, so keep the
+bottom fifth visually quiet.
 Exterior — the only outdoor image in the whole game. Four figures walk away
 from us up a shallow concrete ramp, side by side but with slightly irregular
 human spacing, not a formation. Ahead, the darkness thins: the top third is
 a faint grey pre-dawn gradient in sparse halftone — no sun, no sky detail,
 just dark becoming less dark. The facility door is already out of frame.
+Speech balloon upper-left, tail pointing to the nearest walking figure:
+"가자. 우리."
 [CONTINUITY]
 ```
 
-## 9. END-2 「LEFT_BEHIND」 (전면 1컷 · 무자막)
+## 9. END-2 「LEFT_BEHIND」 (전면 1컷 · 풍선 1)
 
 ```
 [§0 블록]
-SINGLE full-bleed panel, NO TEXT, bottom fifth quiet.
+SINGLE full-bleed panel. Exactly ONE small speech balloon in the UPPER half,
+bottom fifth quiet.
 Inside the facility, facing the outer door which has just CLOSED — a thin
 line of light dying along its seam. The corridor before it is empty. In the
 dark middle distance, the faintest suggestion of shapes standing very still —
 barely more than screentone, deniable. One tube flickers.
+Small speech balloon upper-right, its tail pointing INTO the dying line of
+light along the door seam — the speaker is OUTSIDE, unseen:
+"데리러 올게."
 [CONTINUITY]
 ```
 
-## 10. END-3 「YIELD」 (전면 1컷 · 무자막)
+## 10. END-3 「YIELD」 (전면 1컷 · 풍선 1)
 
 ```
 [§0 블록]
-SINGLE full-bleed panel, NO TEXT, bottom fifth quiet.
+SINGLE full-bleed panel. Exactly ONE speech balloon in the UPPER half,
+bottom fifth quiet.
 Recreate INTRO-PAGE-1's first panel almost exactly — extreme low angle,
 concrete ceiling, one fluorescent tube mid-flicker — but framed slightly
 tighter and darker, and with TWO water stains instead of one. Time has
 passed; the room has been used again. Someone is waking under this ceiling.
 It is not the same someone.
+Speech balloon upper-left, tail pointing to off-panel bottom (the one waking
+under this ceiling, unseen): "...천장이 왜 이래."
+(This is intentionally the EXACT same line as INTRO-PAGE-1's first balloon —
+the loop closing. Render it identically.)
 [CONTINUITY]
 ```
+
+## 11. CREDITS 「아침 쪽으로」 (전면 1컷 · 완전 무자막)
+
+```
+[§0 블록]
+SINGLE full-bleed panel, NO TEXT AT ALL. The game scrolls its credit roll
+over this image in code — keep a WIDE VERTICAL BAND down the CENTER visually
+quiet: low contrast, mostly dark, no strong shapes.
+Exterior, moments after END-1 「TOGETHER」. The top of the concrete ramp seen
+from behind and slightly above: the ramp descends out of frame at the bottom;
+the facility is now only a low ventilation-block silhouette in the
+bottom-left corner. Near the bottom-left edge, four small figures walk out of
+frame — irregular human spacing. The upper two thirds are the pre-dawn
+gradient: dark grey thinning upward in sparse halftone — no sun, no clouds,
+no stars. The quietest image in the whole set.
+[CONTINUITY]
+```
+
+---
+
+## 12. 표지·썸네일 2장 (마케팅용 — 만화 페이지 수에 불포함, 2026-08-25 신설)
+
+> 용도: 링크 미리보기·스토어·발표 슬라이드용 썸네일(가로)과 포스터형 표지(세로).
+> 만화와 같은 §0 화풍을 쓴다 — 게임·만화·표지가 한 작가의 것으로 보이게. 단 표지는
+> 마케팅물이므로 §0의 "지정 안 된 글자 금지"에 **아래 EXACT TEXT만 예외로 허용**한다.
+>
+> **문안 확정본** (자구 그대로 — 반려 기준 동일 적용):
+> - 제목: `I.MY.ME.MINE` (마침표 3개 포함, 전부 대문자)
+> - 부제: `실패할 때마다, 과거의 내가 동료가 된다`
+> - 태그라인: `Fail now. Escape later.`
+>
+> 후킹 설계: 표지가 답하지 않고 걸어야 하는 질문은 "왜 실패가 동료가 되지?"다.
+> 그림이 그 질문을 그린다 — 달리는 하나 + 남겨진 셋(잔상). 부제가 절반만 답하고,
+> 나머지 답은 게임이 한다.
+
+### 12a. THUMBNAIL-WIDE (1536×1024 가로 · 작게 봐도 읽히게)
+
+```
+[§0 블록]
+SINGLE full-bleed image, NOT a comic page — no panel borders. This is a game
+thumbnail that must read at very small sizes: ONE focal shape, hard contrast,
+generous margins. Nothing important within 8% of any edge.
+COMPOSITION: A faceless silhouette RUNS toward the right edge, mid-stride,
+caught in the hard pale light of one fluorescent tube. Trailing behind it to
+the left, THREE translucent paler copies of the same figure, each frozen in a
+different earlier pose (reaching, crouching, standing on a floor plate), each
+fainter with distance — the only self-luminous things in the image. Around
+them, darkness, pipes, a sealed steel door with NO handle far right. On the
+wall behind, faint tally marks grouped in fours.
+TEXT (render EXACTLY, the only text in the image):
+- Title, large, upper-left, clean white stencil capitals: "I.MY.ME.MINE"
+- One line beneath it, much smaller, plain white type: "Fail now. Escape later."
+Keep both perfectly legible at 25% size. No other lettering anywhere.
+[CONTINUITY]
+```
+
+### 12b. COVER-PORTRAIT (1024×1536 세로 · 표지/포스터)
+
+```
+[§0 블록]
+SINGLE full-bleed PORTRAIT image, NOT a comic page — no panel borders.
+A poster: vertical composition with a quiet top band for the title.
+COMPOSITION: Bottom two thirds — a small faceless figure stands before a
+HUGE double-height steel door that fills the width, its top vanishing into
+darkness; the smooth patch where a handle should be catches the brightest
+light. Beside and behind the figure stand THREE translucent copies of itself
+in different poses, arranged like a loose team lineup — together the four
+read as "one person, four attitudes". Tally marks in groups of four run
+along the wall base. One fluorescent tube above makes a tight pool of light.
+TEXT (render EXACTLY, top band, centered, this order):
+- Title, large white stencil capitals: "I.MY.ME.MINE"
+- Subtitle beneath, medium, clean Korean type: "실패할 때마다, 과거의 내가 동료가 된다"
+- Small line at the very bottom of the image, above the margin:
+  "Fail now. Escape later."
+Korean glyphs must be clean and unbroken — reject on any malformed hangul.
+No other lettering anywhere.
+[CONTINUITY]
+```
+
+**표지 반려 기준(추가)**: ① 제목 철자·마침표 위치(`I.MY.ME.MINE`) 불일치 ② 부제
+한글 자구 불일치·획 뭉개짐 ③ EXACT TEXT 외 글자 발생 ④ 축소(25%)에서 제목이 안
+읽힘 ⑤ 잔상 셋이 "다른 사람들"로 보임(체형이 본체와 다르면 반려 — 같은 몸이어야
+"과거의 나"로 읽힌다).
 
 ---
 
