@@ -163,17 +163,20 @@ function setBackbuffer(w: number, h: number): void {
 }
 
 /**
- * 화면에 넣을 배율. **비율과 구도는 절대 건드리지 않는다** — 가로세로에 같은 값이
- * 곱해지고, 남는 여백은 flex 중앙 정렬이 레터박스로 만든다.
+ * 캔버스가 화면에서 차지할 비율. **비율과 구도는 절대 건드리지 않는다** —
+ * 가로세로에 같은 값이 곱해지고, 남는 여백은 flex 중앙 정렬이 레터박스로 만든다.
  *
- * 예전에는 배율 1 이상에서 `Math.floor` 로 **정수배만** 썼다. 픽셀 폭을 고르게
- * 유지하려던 것인데, 1.5 배가 들어가는 화면에서도 1 배로 남아 화면의 절반이
- * 빈 채로 있었다 — 1440×900 에서 960×600 은 화면의 44% 다.
+ * 두 번 고쳤다.
+ * 1. 원래는 배율 1 이상에서 `Math.floor` 로 **정수배만** 썼다. 픽셀 폭을 고르게
+ *    유지하려던 것인데, 1.5 배가 들어가는 화면에서도 1 배로 남았다.
+ * 2. 그 위에 1.2 를 곱해 봤더니 `floor(raw)` 가 1 인 구간(raw 1~2)에서 **전부
+ *    1.2 배로 묶였다.** 1920×1080 처럼 1.8 배가 들어가는 화면도 1.2 배라
+ *    화면의 40% 밖에 못 썼다 — 커진 게 눈에 안 띄는 이유가 이것이었다.
  *
- * 그래서 정수배 위에 `ZOOM` 만큼 더 키운다. 실제로 들어가는 공간(`raw`)을 넘지
- * 않으므로 잘리는 일은 없고, 백버퍼를 dpr 배로 키우므로 흐려지지도 않는다.
+ * 그래서 지금은 **들어가는 만큼 채운다.** 3% 를 남기는 것은 캔버스 테두리와
+ * 글로우가 화면 끝에서 잘리지 않게 하려는 것이다.
  */
-const ZOOM = 1.2;
+const FILL = 0.97;
 
 /**
  * 내부 해상도 960×600 을 화면에 맞춘다.
@@ -185,8 +188,8 @@ function fitCanvas(): void {
   const { w: vw, h: vh } = viewportSize();
   const raw = Math.min(vw / CANVAS_W, vh / CANVAS_H);
 
-  // 화면이 내부 해상도보다 크면 정수배 × ZOOM 까지 키우되, 들어가는 만큼만.
-  const scale = raw >= 1 ? Math.min(raw, Math.floor(raw) * ZOOM) : Math.max(0.05, raw);
+  // 화면이 내부 해상도보다 크면 들어가는 만큼 채운다(1 배 밑으로는 내리지 않는다).
+  const scale = raw >= 1 ? Math.max(1, raw * FILL) : Math.max(0.05, raw);
   const cssW = Math.max(1, Math.floor(CANVAS_W * scale));
   const cssH = Math.max(1, Math.floor(CANVAS_H * scale));
   cv.style.width = `${cssW}px`;
