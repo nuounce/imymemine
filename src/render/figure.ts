@@ -1054,7 +1054,7 @@ export interface TopBuild {
  * `SENTRY` 는 **기준선이라 예전 경비 값(어깨 1.27 / 머리 1.08 / 회전 0.13)과 정확히
  * 같다.** 여기를 건드리면 "SENTRY 는 현재 모습 유지"라는 전제가 깨진다.
  */
-export const TOP_BUILD: Record<
+const BASE_TOP_BUILD: Record<
   'PLAYER' | 'SENTRY' | 'HOUND' | 'BRUTE' | 'WATCHER',
   TopBuild
 > = {
@@ -1149,6 +1149,34 @@ export const TOP_BUILD: Record<
     mount: 1,
     hair: 0.2,
   },
+};
+
+/**
+ * 보스 4종을 더한 최종 표. 위 다섯 항목의 값은 **한 개도 바뀌지 않았다**.
+ *
+ * 보스의 작도는 지금 가장 가까운 기존 체형을 그대로 물려받는다 — 크기 차이는
+ * `GUARD_KINDS`(26 / 24 / 26 / 28)가 이미 만들고 있으므로 실루엣이 뭉개지지는
+ * 않지만, **네 보스만의 체형은 아직 없다.** 네발 유형인 `PACK_LEAD` 만 `HOUND` 를
+ * 물려받아야 하고(무리 우두머리는 개다), 나머지 셋은 걷는 유형이라 다리가 있는
+ * `SENTRY` 를 물려받는다 — `WATCHER` 는 다리가 0 이라 걸으면 미끄러진다.
+ */
+export const TOP_BUILD: Record<
+  | 'PLAYER'
+  | 'SENTRY'
+  | 'HOUND'
+  | 'BRUTE'
+  | 'WATCHER'
+  | 'INSPECTOR'
+  | 'PACK_LEAD'
+  | 'OVERSEER'
+  | 'COUNTER',
+  TopBuild
+> = {
+  ...BASE_TOP_BUILD,
+  INSPECTOR: BASE_TOP_BUILD.SENTRY,
+  PACK_LEAD: BASE_TOP_BUILD.HOUND,
+  OVERSEER: BASE_TOP_BUILD.SENTRY,
+  COUNTER: BASE_TOP_BUILD.SENTRY,
 };
 
 /** `TOP_BUILD` 의 키. */

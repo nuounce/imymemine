@@ -9,12 +9,17 @@
  * 속도·시야·크기·추격 지속은 전부 `GUARD_KINDS` 표에서 온다. 이 파일에는
  * "BRUTE 라면 …" 같은 유형 분기가 **없다**. 특히 BRUTE 가 1타일 통로를 못 지나가는
  * 것은 규칙이 아니라 40px 충돌 박스의 결과다 (`moveToward` 가 `g.sizeSub` 를 쓴다).
+ * 보스 4종도 같은 규율을 지킨다: `INSPECTOR` 가 두리번거리지 않는 것은 `sweepArc: 0`
+ * 의 결과이고, 나머지 셋은 표의 스위치(`sharesScent` / `ghost*Step` / `countTicks`)
+ * 하나씩만 켠다. 유형 이름으로 갈라지는 `if` 는 이 파일에 하나도 없다.
  *
  * ── 결정론 ────────────────────────────────────────────────────────────────
  * 전부 정수. 경비는 **id 오름차순**으로 갱신한다(배열 순서가 아니라 id 다).
- * 경보는 한 틱을 2패스로 나눈다: (1) 모든 경비의 감지·상태전이·이동을 계산하며
- * 경보 목록을 모으고 → (2) 그 목록을 id 순으로 적용한다. 그러지 않으면 경비 A 의
- * 갱신이 같은 틱에 경비 B 의 판단을 바꿔 배열 순서가 결과를 가른다.
+ * 경보와 무리 냄새는 한 틱을 2패스로 나눈다: (1) 모든 경비의 감지·상태전이·이동을
+ * 계산하며 경보·궤적 목록을 모으고 → (2) 그 목록을 id 순으로 적용한다. 그러지 않으면
+ * 경비 A 의 갱신이 같은 틱에 경비 B 의 판단을 바꿔 배열 순서가 결과를 가른다.
+ * `OVERSEER` 의 잔상 배율도 마찬가지다 — 잔상 수는 `createWorld` 가 확정한 몸 목록
+ * 에서만 나오므로 틱 안 어디서 재계산해도 같은 값이다.
  */
 
 import {
@@ -91,8 +96,56 @@ interface Alarm {
   y: number;
 }
 
-function specOf(g: Guard): GuardKindSpec {
-  return GUARD_KINDS[g.kind];
+/**
+ * 이번 틱에 무리에게 넘길 궤적 한 건 (`sharesScent` 유형). 경보와 같은 2패스를 탄다:
+ * (1)에서 모으고 (2)에서 **id 순으로** 적용한다. 같은 틱에 즉시 적용하면 갱신 순서가
+ * 결과를 갈라 결정론이 깨진다.
+ */
+interface ScentShare {
+  /** 넘긴 경비의 id. 자기 자신은 자기 냄새를 다시 받지 않는다. */
+  fromId: number;
+  bodyId: number;
+  index: number;
+}
+
+/**
+ * 이 루프에 투입된 잔상의 수. 몸 목록은 `createWorld` 가 확정하고 그 뒤로 늘거나
+ * 줄지 않으므로, 매 틱 재계산해도 **항상 같은 값**이다. `alive` 를 보지 않는 이유가
+ * 여기에 있다 — 잔상이 도중에 잡혀 시체가 되었다고 `OVERSEER` 의 배율이 틱 중간에
+ * 흔들리면 "잔상을 많이 쓸수록 이 방이 어려워진다"가 예측 불가능한 규칙이 된다.
+ */
+function ghostCount(s: SimState): number {
+  let n = 0;
+  for (let i = 0; i < s.bodies.length; i++) {
+    if (!s.bodies[i]!.isLive) n++;
+  }
+  return n;
+}
+
+/** 정수 배율. `v * (100 + step*n) / 100` 을 내림한다 — 부동소수를 거치지 않는다. */
+function scaleBy(v: number, step: number, n: number): number {
+  return ((v * (100 + step * n)) / 100) | 0;
+}
+
+/**
+ * 이 경비가 **이번 틱에** 쓰는 수치.
+ *
+ * 잔상 배율이 0 인 유형(기존 4종 포함)은 `GUARD_KINDS` 의 얼어붙은 객체를 그대로
+ * 돌려준다 — 즉 값도 참조도 한 비트 바뀌지 않는다. 배율이 붙은 유형만 파생 객체를
+ * 만들고, 그 계산은 전부 정수 곱셈·나눗셈이다.
+ */
+export function guardSpecOf(s: SimState, g: Guard): GuardKindSpec {
+  const base = GUARD_KINDS[g.kind];
+  if (base.ghostSpeedStep === 0 && base.ghostViewStep === 0) return base;
+  const n = ghostCount(s);
+  if (n === 0) return base;
+  return {
+    ...base,
+    patrolSpeed: scaleBy(base.patrolSpeed, base.ghostSpeedStep, n),
+    investigateSpeed: scaleBy(base.investigateSpeed, base.ghostSpeedStep, n),
+    chaseSpeed: scaleBy(base.chaseSpeed, base.ghostSpeedStep, n),
+    viewRange: scaleBy(base.viewRange, base.ghostViewStep, n),
+  };
 }
 
 function guardCx(g: Guard): number {
@@ -108,9 +161,16 @@ function bodyCy(b: Body): number {
   return b.y + BODY_SUB / 2;
 }
 
-/** 시야 안의 살아있는 바디 중 가장 가까운 것. 동률이면 id 낮은 쪽. */
-function sense(s: SimState, g: Guard, blockers: readonly Rect[]): Body | null {
-  const spec = specOf(g);
+/**
+ * 시야 안의 살아있는 바디 중 가장 가까운 것. 동률이면 id 낮은 쪽.
+ * 수치는 호출자가 준 `spec` 만 쓴다 — `OVERSEER` 의 늘어난 시야가 여기까지 와야 한다.
+ */
+function sense(
+  s: SimState,
+  g: Guard,
+  spec: GuardKindSpec,
+  blockers: readonly Rect[],
+): Body | null {
   const gx = guardCx(g);
   const gy = guardCy(g);
   let best: Body | null = null;
@@ -464,13 +524,54 @@ function trackedIsCorpse(s: SimState, g: Guard): boolean {
   return false;
 }
 
+/**
+ * 계수 한 틱 (`countTicks > 0` 인 유형 = COUNTER).
+ *
+ * 잡지 않는다. 살아있는 몸 하나를 `countTicks` 동안 **끊기지 않고** 붙들면
+ * `s.counted` 를 1 올리고, 그 몸은 `countCooldown` 동안 다시 세지 않는다.
+ * 쿨다운이 몸별인 이유는 두 몸이 함께 서 있을 때 한쪽이 다른 쪽의 계수를
+ * 가려서는 안 되기 때문이다.
+ *
+ * **여기서 `DEBT` 를 건드리지 않는다.** 시뮬은 숫자를 올릴 뿐이고, 그 숫자를
+ * 무엇으로 읽을지는 세션의 몫이다 (STORY §2 — 이 이야기의 공포는 회계다).
+ */
+function countTick(
+  s: SimState,
+  g: Guard,
+  spec: GuardKindSpec,
+  seen: Body | null,
+): void {
+  for (let i = 0; i < g.countCd.length; i++) {
+    const cd = g.countCd[i] ?? 0;
+    if (cd > 0) g.countCd[i] = cd - 1;
+  }
+  if (seen === null) {
+    g.countTargetId = -1;
+    g.countTimer = 0;
+    return;
+  }
+  if (seen.id !== g.countTargetId) {
+    g.countTargetId = seen.id;
+    g.countTimer = 0;
+  }
+  g.countTimer++;
+  if (g.countTimer < spec.countTicks) return;
+  // id 가 곧 슬롯이다 (types.ts `countCd`). 범위 밖이면 세지 않는다.
+  if (seen.id < 0 || seen.id >= g.countCd.length) return;
+  if ((g.countCd[seen.id] ?? 0) > 0) return;
+  s.counted++;
+  g.countCd[seen.id] = spec.countCooldown;
+  g.countTimer = 0;
+}
+
 function updateOne(
   s: SimState,
   g: Guard,
   blockers: readonly Rect[],
   alarms: Alarm[],
+  shares: ScentShare[],
 ): void {
-  const spec = specOf(g);
+  const spec = guardSpecOf(s, g);
   if (g.alarmCooldown > 0) g.alarmCooldown--;
 
   // 눈뽕에 맞은 동안은 보지도 듣지도 움직이지도 못하고 제자리에서 돈다.
@@ -488,7 +589,11 @@ function updateOne(
   hearNoise(s, g, spec);
 
   const blind = g.state === 'RETURN' && g.stateTimer > 0;
-  const seen = blind ? null : sense(s, g, blockers);
+  const seen = blind ? null : sense(s, g, spec, blockers);
+
+  // 계수는 감지 게이지와 **무관**하다 — 얼마나 의심하는지가 아니라 얼마나 오래
+  // 붙들었는지만 본다. 그래서 게이지가 차기 전에도 대가가 쌓인다.
+  if (spec.countTicks > 0) countTick(s, g, spec, seen);
 
   if (seen !== null) {
     const d2 = dist2(guardCx(g), guardCy(g), bodyCx(seen), bodyCy(seen));
@@ -548,6 +653,11 @@ function updateOne(
     g.lungePhase++;
     if (g.state === 'CHASE' || g.state === 'INVESTIGATE') updateScent(s, g, spec);
     else clearScent(g);
+  }
+
+  // 무리에게 넘길 궤적을 **모으기만** 한다. 적용은 2패스의 (2)에서.
+  if (spec.sharesScent && g.scentBodyId >= 0 && g.scentIndex >= 0) {
+    shares.push({ fromId: g.id, bodyId: g.scentBodyId, index: g.scentIndex });
   }
 
   switch (g.state) {
@@ -719,6 +829,37 @@ function applyAlarms(s: SimState, alarms: readonly Alarm[], order: readonly numb
 }
 
 /**
+ * 2패스의 (2) — 무리 냄새 공유. 모아 둔 궤적을 **id 순으로** 넘긴다.
+ *
+ * 받는 쪽은 냄새를 읽을 수 있는 유형(`tracksScent`)뿐이고, 이미 무언가를 물고
+ * 있거나 추격 중인 경비는 흔들지 않는다 — 그래야 한 마리를 미끼로 빼는 것이
+ * 여전히 유효하되, **빼지 않은 나머지는 전부 같은 궤적으로 온다.**
+ * 경보와 달리 반경 조건이 없다: 무리는 거리로 끊기지 않는다.
+ */
+function applyShares(
+  s: SimState,
+  shares: readonly ScentShare[],
+  order: readonly number[],
+): void {
+  if (shares.length === 0) return;
+  for (let a = 0; a < shares.length; a++) {
+    const sh = shares[a]!;
+    const owner = scentOwner(s, sh.bodyId);
+    if (owner === null || !hasIndex(owner.scent, sh.index)) continue;
+    const p = scentAt(owner.scent, sh.index);
+    for (let k = 0; k < order.length; k++) {
+      const g = s.guards[order[k]!]!;
+      if (g.id === sh.fromId) continue;
+      if (!GUARD_KINDS[g.kind].tracksScent) continue;
+      if (g.state === 'CHASE') continue;
+      if (g.scentBodyId >= 0) continue;
+      beginInvestigate(g, p.x, p.y);
+      lockScent(g, sh.bodyId, sh.index);
+    }
+  }
+}
+
+/**
  * 눈뽕 폭발 (SPEC 확장). 사용 지점 반경 안이면서 **시야가 통하는** 경비만 어지러워진다 —
  * 벽 뒤는 안 걸린다. 판정 순서는 id 오름차순이고 난수는 쓰지 않는다.
  *
@@ -749,12 +890,14 @@ export function updateGuards(s: SimState, staticBlockers: readonly Rect[]): void
   const blockers = crateRects(s.crates).concat(staticBlockers);
   const order = idOrder(s.guards);
   const alarms: Alarm[] = [];
-  // (1) 감지 · 상태전이 · 이동. 경보는 적용하지 않고 모으기만 한다.
+  const shares: ScentShare[] = [];
+  // (1) 감지 · 상태전이 · 이동. 경보와 무리 냄새는 적용하지 않고 모으기만 한다.
   for (let i = 0; i < order.length; i++) {
-    updateOne(s, s.guards[order[i]!]!, blockers, alarms);
+    updateOne(s, s.guards[order[i]!]!, blockers, alarms, shares);
   }
-  // (2) 모은 경보를 id 순으로 적용.
+  // (2) 모은 경보와 궤적을 id 순으로 적용.
   applyAlarms(s, alarms, order);
+  applyShares(s, shares, order);
 }
 
 /**

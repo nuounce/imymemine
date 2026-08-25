@@ -118,8 +118,30 @@ export type GuardState =
  * - `HOUND`   시야가 좁아 피하기 쉽지만 한번 물면 오래 쫓는다 → 도망이 아니라 따돌려야 한다.
  * - `BRUTE`   몸이 40px 라 1타일(32px) 통로에 **물리적으로** 들어가지 못한다 → 좁은 길이 피난처가 된다.
  * - `WATCHER` 직접 잡지 않는다. 게이지가 차면 경보를 울려 다른 경비를 부른다 → 느린 적이 더 무섭다.
+ *
+ * ── 보스 4종 (막마다 하나) ────────────────────────────────────────────────
+ * 보스는 체력이 많은 적이 아니라 **그 막에서 배운 규칙을 뒤집는 적**이다.
+ * 넷 다 위 네 유형의 수치를 건드리지 않고, 자기 표의 값만으로 성립한다.
+ *
+ * - `INSPECTOR` 1막. 두리번거리지 않고(`sweepArc: 0`) 시간표대로만 움직인다.
+ *               시야는 좁되 사거리가 길다 → "혼자서는 둘 다 못 한다"가
+ *               "시간표를 읽으면 혼자서도 지나간다"로 뒤집힌다.
+ * - `PACK_LEAD` 2막. 같은 레벨의 모든 냄새 추적 유형과 궤적을 공유한다(반경 무제한).
+ *               한 마리를 미끼로 빼도 나머지가 같은 궤적으로 온다 → 미끼를 나눠야 한다.
+ * - `OVERSEER`  3막. **잔상 수에 비례해** 속도와 시야가 오른다 → 코어 루프를 정면으로
+ *               공격한다. par 를 지키는 것이 처음으로 생존 조건이 된다.
+ * - `COUNTER`   4막. 잡지 않는다. **센다**(`SimState.counted`) → 들키지 않는 것이
+ *               아니라 보이는 것 자체가 대가가 된다 (STORY §2 의 수확 전제).
  */
-export type GuardKind = 'SENTRY' | 'HOUND' | 'BRUTE' | 'WATCHER';
+export type GuardKind =
+  | 'SENTRY'
+  | 'HOUND'
+  | 'BRUTE'
+  | 'WATCHER'
+  | 'INSPECTOR'
+  | 'PACK_LEAD'
+  | 'OVERSEER'
+  | 'COUNTER';
 
 export interface Guard {
   id: number;
@@ -182,6 +204,18 @@ export interface Guard {
   scentTimer: number;
   /** 런지·좌우 흔들기의 위상. CHASE 진입 때 0 으로 리셋된다. */
   lungePhase: number;
+
+  // ── 계수 (countTicks > 0 인 유형 = COUNTER) ──────────────────────────────
+  /** 지금 연속으로 붙들고 있는 몸 id (-1 = 없음). 바뀌면 타이머가 처음부터다. */
+  countTargetId: number;
+  /** 그 몸을 연속으로 붙든 틱. `countTicks` 에 닿으면 한 번 센다. */
+  countTimer: number;
+  /**
+   * 몸별 재포착 쿨다운. **인덱스 = Body id** (0..MAX_BODIES-1) 다 —
+   * `createWorld` 가 I 에 0, 잔상에 1..3 을 주므로 id 가 곧 슬롯이다.
+   * 같은 몸을 매 틱 세지 않게 하는 유일한 장치이며, 길이는 유형과 무관하게 같다.
+   */
+  countCd: number[];
 }
 
 export interface Cctv {
@@ -452,6 +486,12 @@ export interface SimState {
 
   outcome: SimOutcome;
   alerts: number;
+  /**
+   * `COUNTER` 가 살아있는 몸을 붙들어 **센** 횟수. 시뮬은 세기만 한다 —
+   * 이 숫자를 `DEBT` 로 읽을지 말지는 세션의 몫이고, 시뮬은 `DEBT` 를 모른다.
+   * 시뮬 상태이므로 해시에 포함된다 (hash.ts).
+   */
+  counted: number;
   /** 다음 엔티티 id */
   nextId: number;
 }

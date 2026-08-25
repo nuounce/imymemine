@@ -146,6 +146,14 @@ const STRIDE_SUB: Readonly<Record<GuardKind, number>> = Object.freeze({
   BRUTE: 40 * SUBPIXEL,
   HOUND: 13 * SUBPIXEL,
   WATCHER: 0,
+  // 보스 4종. 발소리는 가장 가까운 기존 유형의 보폭을 쓴다 — 보스만의 음색은
+  // 아직 없다(전용 큐가 생기면 `footKindOf` 와 함께 갈아 끼우면 된다).
+  // COUNTER 는 WATCHER 처럼 서 있지 않고 **천천히 걷는다**(순찰 288) — 그래서
+  // 보폭 0 이 아니라 SENTRY 보다 긴 보폭을 준다. 느린 발소리가 곧 그 유형의 정보다.
+  INSPECTOR: 26 * SUBPIXEL,
+  PACK_LEAD: 13 * SUBPIXEL,
+  OVERSEER: 26 * SUBPIXEL,
+  COUNTER: 30 * SUBPIXEL,
 });
 
 /** 잔상의 보폭. 걷기 512/틱 기준 12틱, 달리면 저절로 잦아진다. */
@@ -348,10 +356,16 @@ function emit(
 function footKindOf(kind: GuardKind): CueKind | null {
   switch (kind) {
     case 'SENTRY':
+    // 보스 3종은 걷는 유형이다. 전용 음색이 없다고 **소리 없이** 걷게 두면
+    // 귀로 위치를 잡는 플레이가 이 셋 앞에서만 통하지 않는다.
+    case 'INSPECTOR':
+    case 'OVERSEER':
+    case 'COUNTER':
       return 'FOOT_SENTRY';
     case 'BRUTE':
       return 'FOOT_BRUTE';
     case 'HOUND':
+    case 'PACK_LEAD':
       return 'FOOT_HOUND';
     default:
       return null; // WATCHER 는 걷지 않는다.

@@ -239,6 +239,36 @@ export interface GuardKindSpec {
    * 이 파일 밖에 "HOUND 라면 …" 같은 유형 분기를 만들지 않기 위한 스위치다.
    */
   tracksScent: boolean;
+
+  // ── 보스 스위치 (기존 4종은 전부 0 / false 다) ────────────────────────────
+  /**
+   * 잔상 한 개당 이동 속도 증가율(%). 0 이면 잔상 수와 무관하다.
+   * 배율은 `(v * (100 + step * n)) / 100 | 0` — 정수 나눗셈뿐이다 (guard.ts).
+   */
+  ghostSpeedStep: number;
+  /** 잔상 한 개당 시야 거리 증가율(%). 0 이면 잔상 수와 무관하다. */
+  ghostViewStep: number;
+  /**
+   * true 면 자기가 문 궤적을 **같은 레벨의 모든 냄새 추적 유형**에게 넘긴다.
+   * 경보(`ALERT_RADIUS`)와 달리 반경이 없다 — 무리는 거리로 끊기지 않는다.
+   */
+  sharesScent: boolean;
+  /**
+   * 살아있는 몸을 연속으로 이만큼 붙들면 한 번 **센다**. 0 이면 세지 않는다.
+   * 세는 것은 잡는 것과 별개라 `canChase` 와 무관하게 동작한다.
+   */
+  countTicks: number;
+  /** 같은 몸을 다시 세기까지의 잠금 틱. 매 틱 세지 않게 하는 값이다. */
+  countCooldown: number;
+}
+
+/** `kindSpec` 의 꼬리 인자. 지정하지 않은 값은 전부 기존 4종의 기본값이다. */
+interface KindExtra {
+  ghostSpeedStep?: number;
+  ghostViewStep?: number;
+  sharesScent?: boolean;
+  countTicks?: number;
+  countCooldown?: number;
 }
 
 function kindSpec(
@@ -255,6 +285,7 @@ function kindSpec(
   raisesAlarm: boolean,
   turnRate: number = GUARD_TURN_RATE,
   tracksScent = false,
+  extra: KindExtra = {},
 ): GuardKindSpec {
   return {
     size,
@@ -271,6 +302,11 @@ function kindSpec(
     raisesAlarm,
     turnRate,
     tracksScent,
+    ghostSpeedStep: extra.ghostSpeedStep ?? 0,
+    ghostViewStep: extra.ghostViewStep ?? 0,
+    sharesScent: extra.sharesScent ?? false,
+    countTicks: extra.countTicks ?? 0,
+    countCooldown: extra.countCooldown ?? 0,
   };
 }
 
@@ -292,6 +328,35 @@ export const GUARD_KINDS: Readonly<Record<GuardKind, GuardKindSpec>> =
     BRUTE: kindSpec(40, 256, 288, 352, 192, 2144, 5, 11, 45, true, false),
     // 순찰 속도 0 = 제자리에 못박힌 감시자. 두리번거리기만 한다.
     WATCHER: kindSpec(28, 0, 0, 0, 320, 839, 6, 7, 0, false, true),
+
+    // ── 보스 4종 ────────────────────────────────────────────────────────────
+    // 위 네 줄은 한 글자도 바뀌지 않았다. 보스는 전부 이 아래 네 줄과
+    // `KindExtra` 스위치만으로 성립한다 — guard.ts 에 "INSPECTOR 라면 …" 같은
+    // 유형 분기는 없다.
+    //
+    // 1막. 두리번거리기 폭이 **0** 이다 → 대기 중 facing 이 한 틱도 흔들리지 않는다.
+    // "두리번거리지 않는다"는 규칙이 아니라 `sweepArc: 0` 의 결과다 (BRUTE 의
+    // 40px 가 통로를 막는 것과 같은 방식). 시야각 25° 로 좁되 사거리 288px(9타일)
+    // 로 가장 길다 — 복도를 훑는 점검자.
+    INSPECTOR: kindSpec(26, 416, 448, 512, 288, 466, 3, 0, 60, true, false),
+    // 2막. 냄새를 공유한다. 자기 속도는 HOUND 보다 한 단 느리되(448/520/640 <
+    // 480/560/704) 추격 지속은 전 유형 최장(480)이다 — 미끼 하나로는 못 끊는다.
+    PACK_LEAD: kindSpec(
+      24, 448, 520, 640, 176, 700, 2, 6, 480, true, false, HOUND_TURN_RATE, true,
+      { sharesScent: true },
+    ),
+    // 3막. 잔상 한 개당 속도 +12%, 시야 +10%. 잔상을 아낄수록 약해진다.
+    OVERSEER: kindSpec(
+      26, 384, 448, 512, 208, 1192, 4, 8, 120, true, false, GUARD_TURN_RATE, false,
+      { ghostSpeedStep: 12, ghostViewStep: 10 },
+    ),
+    // 4막. `canChase: false` — 손을 대지 않는다. 45틱(0.75초) 붙들면 한 번 세고,
+    // 같은 몸은 180틱(3초) 동안 다시 세지 않는다. `raisesAlarm` 도 false 다:
+    // 부르지도 잡지도 않고 **적기만** 한다.
+    COUNTER: kindSpec(
+      28, 288, 320, 0, 256, 839, 2, 7, 0, false, false, GUARD_TURN_RATE, false,
+      { countTicks: 45, countCooldown: 180 },
+    ),
   });
 
 // ── 두리번거리기 / 수색 ────────────────────────────────────────────────────

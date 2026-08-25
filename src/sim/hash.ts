@@ -60,6 +60,9 @@ export function hashState(s: SimState): number {
   f.int(s.width);
   f.int(s.height);
   f.int(s.alerts);
+  // 계수는 알람과 나란한 **시뮬 상태**다. 빠지면 COUNTER 가 해시 밖에서 숫자를
+  // 올리게 되고, 세션이 읽는 값이 재생 때마다 달라져도 "결정론 통과"로 보인다.
+  f.int(s.counted);
   f.int(s.nextId);
   f.byte(OUTCOME_CODE[s.outcome] ?? 0);
 
@@ -128,6 +131,11 @@ export function hashState(s: SimState): number {
     f.int(g.scentIndex);
     f.int(g.scentTimer);
     f.int(g.lungePhase);
+    // 계수 진행도와 몸별 쿨다운도 상태다 — 빠지면 "언제 다시 세는가"가 해시 밖에서
+    // 움직인다. 길이는 전 유형 동일(MAX_BODIES)이라 폭이 흔들리지 않는다.
+    f.int(g.countTargetId);
+    f.int(g.countTimer);
+    for (let k = 0; k < g.countCd.length; k++) f.int(g.countCd[k] ?? 0);
   }
 
   f.int(s.cctvs.length);

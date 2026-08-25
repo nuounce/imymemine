@@ -23,6 +23,7 @@ import {
   CANVAS_H,
   CANVAS_W,
   IN_DOWN,
+  IN_FLASH,
   IN_INTERACT,
   IN_LEFT,
   IN_RIGHT,
@@ -279,7 +280,7 @@ export function hitTest(hits: readonly HitRect[], x: number, y: number): string 
 // **이 블록은 Session/SimState 를 읽기만 한다.** 표시 상태는 전부 아래 모듈 스코프
 // 변수와 localStorage 에만 있다 — 세션에 한 바이트라도 쓰면 결정론이 깨진다.
 
-export type PromptId = 'MOVE' | 'INTERACT' | 'COMMIT' | 'OVERWRITE' | 'RUN' | 'TIMEUP';
+export type PromptId = 'MOVE' | 'INTERACT' | 'COMMIT' | 'OVERWRITE' | 'RUN' | 'FLASH' | 'TIMEUP';
 
 interface PromptCopy {
   /** 키보드용 키캡 라벨. 빈 문자열이면 키캡 없이 문구만. */
@@ -298,6 +299,9 @@ const PROMPT_COPY: Readonly<Record<PromptId, PromptCopy>> = {
   COMMIT: { key: 'R', touchKey: 'COMMIT', line: '여기 나를 남긴다', color: C_LOOT, big: true },
   OVERWRITE: { key: 'Q', touchKey: 'Q', line: '잔상 하나를 다시 남긴다', color: C_LOOT },
   RUN: { key: 'SHIFT', touchKey: '링 밖', line: '뛰면 소리가 난다', color: C_DANGER },
+  // 주운 눈뽕을 쓰는 법. 속말은 "섬광탄이다. ...한 발뿐이네."까지만 말하고
+  // **키는 여기서만** 말한다 — 말과 화면이 같은 걸 두 번 하면 설명서가 된다.
+  FLASH: { key: 'F', touchKey: '', line: '터뜨리면 잠깐 눈이 먼다', color: C_LOOT },
   TIMEUP: { key: '', touchKey: '', line: '곧 강제로 잔상이 된다', color: C_DANGER },
 };
 
@@ -308,6 +312,8 @@ const PROMPT_COPY: Readonly<Record<PromptId, PromptCopy>> = {
 const PROMPT_ORDER: readonly PromptId[] = [
   'COMMIT',
   'RUN',
+  // 눈뽕은 한 발뿐이고 주운 판에서만 뜬다 — 그 드문 순간을 놓치면 다시 안 온다.
+  'FLASH',
   'INTERACT',
   'OVERWRITE',
   'TIMEUP',
@@ -475,6 +481,10 @@ function promptArmed(id: PromptId, s: Session): boolean {
     case 'RUN':
       // `spotted` = 이번 루프에 경비/감시안에 발각된 적이 있는가 (sim 이 세우는 깃발).
       return liveBody(s)?.spotted === true;
+    case 'FLASH':
+      // 손에 쥔 순간부터. 터치에는 눈뽕 패드가 없으므로(`TOUCH_PADS`) 띄우지 않는다 —
+      // 누를 수 없는 것을 가르치면 안내가 아니라 약 올리는 것이다.
+      return !touchUi && liveBody(s)?.hasFlash === true;
     case 'TIMEUP':
       return MAX_TICKS - s.sim.tick < TICK_HZ * 10;
     default:
@@ -494,11 +504,12 @@ function updatePrompt(s: Session): void {
   loadTaught();
   promptClock++;
 
-  // 마스크에 실려 오는 세 키는 여기서 직접 배움 판정을 한다.
+  // 마스크에 실려 오는 네 키는 여기서 직접 배움 판정을 한다.
   const inp = liveBody(s)?.lastInput ?? 0;
   if ((inp & (IN_UP | IN_DOWN | IN_LEFT | IN_RIGHT)) !== 0) learnPrompt('MOVE');
   if ((inp & IN_INTERACT) !== 0) learnPrompt('INTERACT');
   if ((inp & IN_RUN) !== 0) learnPrompt('RUN');
+  if ((inp & IN_FLASH) !== 0) learnPrompt('FLASH');
 
   if (promptId !== null && promptClock >= promptEnd) {
     taught.add(promptId);
@@ -674,6 +685,14 @@ const HELP_GROUPS: readonly HelpGroup[] = [
     title: '그 외',
     rows: [
       { keys: ['E'], touchKeys: ['E'], line: '눈앞의 버튼 · 레버를 만진다' },
+      // 속말은 눈뽕을 주웠다는 것까지만 말한다(키 이름은 세계 밖이다) — 쓰는 법은
+      // 여기와 상황 프롬프트(`FLASH`) 두 곳이 책임진다.
+      {
+        keys: ['F'],
+        touchKeys: [],
+        line: '주운 섬광탄을 터뜨린다 — 본 사람은 잠깐 눈이 먼다',
+        color: C_LOOT,
+      },
       { keys: ['ESC'], touchKeys: ['II'], line: '일시정지' },
       { keys: ['M'], touchKeys: ['뮤트'], line: '소리 끄기 / 켜기' },
       { keys: ['−', '='], touchKeys: [], join: '/', line: '마이크 감도 (LISTEN 모드) — 주변이 시끄러우면 낮춘다' },
@@ -1334,7 +1353,9 @@ function drawNotice(ctx: CanvasRenderingContext2D, s: Session): void {
 let objectiveClock = 0;
 
 /**
- * `▸ 억제 코어를 손에 넣어라` → `▸ 탈출구로`.
+ * `▸ 저 물건부터` → (3막부터) `▸ 억제 코어부터` → `▸ 탈출구로`.
+ * 문구는 `currentObjective` 가 막을 보고 고른다 — 그가 아직 모르는 이름을
+ * 표지판이 먼저 말하지 않는다.
  * 벽에 붙은 작은 지시 표지판이다. 코어를 손에 넣으면 초록으로 바뀌고(장치 ON 색),
  * 맥동하며 탈출구 방향 화살표가 붙는다.
  */

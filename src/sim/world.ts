@@ -29,6 +29,7 @@ import {
   INTERACT_RANGE,
   LEVER_COOLDOWN_TICKS,
   LOOT_PICKUP_RANGE,
+  MAX_BODIES,
   MAX_TICKS,
   MIC_NOISE_RADIUS,
   micLevelOf,
@@ -206,6 +207,11 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
         scentIndex: -1,
         scentTimer: 0,
         lungePhase: 0,
+        countTargetId: -1,
+        countTimer: 0,
+        // 길이는 유형과 무관하게 MAX_BODIES 고정이다 — 인덱스가 곧 Body id 이므로
+        // 유형별로 길이가 달라지면 해시 폭이 달라진다.
+        countCd: new Array<number>(MAX_BODIES).fill(0),
       };
     }),
     cctvs: (level.cctvs ?? []).map((c) => ({
@@ -314,6 +320,7 @@ export function createWorld(level: LevelDef, ghosts: GhostSpec[]): SimState {
     noises: [],
     outcome: 'RUNNING',
     alerts: 0,
+    counted: 0,
     nextId,
   };
 
