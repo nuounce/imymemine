@@ -2101,7 +2101,7 @@ export function drawTitle(
   }
 
   // 표어는 시설 벽에 찍힌 스텐실 도장이다.
-  stencilBig(ctx, 'Fail now. Escape later.', CANVAS_W / 2, baseY + 48, 18, C_STRIPE, C_VOID);
+  stencilBig(ctx, 'My Squad? Me, Me, Me, Me.', CANVAS_W / 2, baseY + 48, 18, C_STRIPE, C_VOID);
   text(
     ctx,
     '실패할 때마다 과거의 내가 동료가 되는 60초 타임루프 탈출극',
