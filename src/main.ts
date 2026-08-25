@@ -792,7 +792,8 @@ function handlePauseTap(x: number, y: number): void {
   else if (id === 'MUTE') {
     audio.resume();
     audio.toggleMute();
-  }
+  } else if (id === 'MIC_DOWN') mic.adjustSensitivity(-1);
+  else if (id === 'MIC_UP') mic.adjustSensitivity(1);
 }
 
 /**
@@ -982,7 +983,7 @@ function onRender(): void {
       drawWorld(g, session.sim, view);
       drawHud(g, session, m);
       // 조작 UI 는 HUD 위, 일시정지 화면 아래. 터치 기기에서만 존재한다.
-      if (touchMode) drawTouchControls(g, session, touch.view());
+      if (touchMode) drawTouchControls(g, session, touch.view(), { x: view.camX, y: view.camY });
       drawTopLayer();
       break;
     case 'TRANSITION':
@@ -1038,7 +1039,9 @@ function drawTopLayer(): void {
       drawHelp(g);
       break;
     case 'PAUSE':
-      drawPause(g);
+      drawPause(g, session.mode === 'LISTEN'
+        ? { level: mic.view().sensitivity, steps: mic.view().sensitivitySteps }
+        : null);
       break;
     default:
       // 'NOTE' / 'NONE' — 단서는 이미 월드 레이어에 그려졌다. 얹을 것이 없다.

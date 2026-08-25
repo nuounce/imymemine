@@ -195,27 +195,46 @@ export const TITLE_HITS: readonly HitRect[] = [
   { id: 'MUTE', ...TOUCH_MUTE_BTN },
 ];
 
-const PAUSE_RESUME_BTN = { x: 260, y: 400, w: 200, h: 46 } as const;
-const PAUSE_MUTE_BTN = { x: 500, y: 400, w: 200, h: 46 } as const;
+/**
+ * 일시정지 버튼 세 개. 높이 72 는 0.625 배 화면에서 45 CSS px 이다 —
+ * 예전 46·42 는 각각 28·26 CSS px 이라 손가락 권장치(44)의 절반을 조금 넘었다.
+ */
+const PAUSE_RESUME_BTN = { x: 250, y: 342, w: 220, h: 72 } as const;
+const PAUSE_MUTE_BTN = { x: 490, y: 342, w: 220, h: 72 } as const;
 /** 일시정지에서 조작법으로. 손가락에게는 `H` 키가 존재하지 않는다. */
-const PAUSE_HELP_BTN = { x: 380, y: 462, w: 200, h: 42 } as const;
+const PAUSE_HELP_BTN = { x: 370, y: 430, w: 220, h: 72 } as const;
 
 /** 일시정지 화면의 탭 대상(터치 전용). */
+/**
+ * LISTEN 모드 마이크 감도. 데스크톱은 `−`/`=` 로 조절하는데 손가락에는 그 키가
+ * 없어서, 모바일에서는 시끄러운 곳에 들어가도 감도를 낮출 방법이 아예 없었다.
+ * 일시정지 화면에 둔 이유는 조절이 급한 조작이 아니고, 플레이 화면에 버튼을
+ * 하나 더 얹으면 그만큼 방이 안 보이기 때문이다.
+ */
+const PAUSE_MIC_DOWN = { x: 200, y: 430, w: 96, h: 72 } as const;
+const PAUSE_MIC_UP = { x: 664, y: 430, w: 96, h: 72 } as const;
+
 export const PAUSE_HITS: readonly HitRect[] = [
   { id: 'RESUME', ...PAUSE_RESUME_BTN },
   { id: 'MUTE', ...PAUSE_MUTE_BTN },
   { id: 'HELP', ...PAUSE_HELP_BTN },
+  { id: 'MIC_DOWN', ...PAUSE_MIC_DOWN },
+  { id: 'MIC_UP', ...PAUSE_MIC_UP },
 ];
 
 /**
  * 우상단 `?` 버튼. 터치 기기에서 조작법 패널로 들어가는 유일한 문이다.
  * 상단 밴드(0..50) 아래, PAUSE 패드(x 905..947) 왼쪽 — 어느 것도 가리지 않는다.
  */
-const HELP_BTN = { x: 846, y: 54, w: 44, h: 44 } as const;
+const HELP_BTN = { x: 800, y: 120, w: 44, h: 44 } as const;
 
-/** `?` 버튼의 탭 영역. 손가락은 마우스보다 크므로 보이는 원보다 넉넉하다. */
+/**
+ * `?` 버튼의 탭 영역. 손가락은 마우스보다 크므로 보이는 원보다 넉넉하다.
+ * 68×68 은 0.625 배에서 42.5 CSS px 이다. 일시정지 패드(918,74 판정 반지름 40)의
+ * 판정 원과 이 사각형이 71px 떨어져 있어 서로 먹지 않는다.
+ */
 export const HELP_HITS: readonly HitRect[] = [
-  { id: 'HELP', x: HELP_BTN.x - 8, y: HELP_BTN.y - 8, w: HELP_BTN.w + 16, h: HELP_BTN.h + 16 },
+  { id: 'HELP', x: HELP_BTN.x - 12, y: HELP_BTN.y - 12, w: HELP_BTN.w + 24, h: HELP_BTN.h + 24 },
 ];
 
 /**
@@ -223,13 +242,24 @@ export const HELP_HITS: readonly HitRect[] = [
  * 실패가 쌓여야만 그려지지만 히트 영역은 고정이다: 눌렸을 때의 판정은
  * `toggleHint`/`requestSkip` 이 잠금 조건으로 다시 거른다.
  */
-const HINT_BTN = { x: 352, y: 566, w: 120, h: 28 } as const;
-const SKIP_BTN = { x: 488, y: 566, w: 120, h: 28 } as const;
+const HINT_BTN = { x: 438, y: 566, w: 112, h: 28 } as const;
+const SKIP_BTN = { x: 566, y: 566, w: 112, h: 28 } as const;
 
-/** 힌트/건너뛰기 칩의 탭·클릭 영역. 그리는 상수를 그대로 내보낸다. */
+/**
+ * 힌트/건너뛰기 칩의 탭·클릭 영역.
+ *
+ * 두 가지를 고쳤다.
+ * 1. **왼쪽으로 너무 나가 있었다.** 예전 x(352·488)의 히트 영역은 조이스틱을 새로
+ *    잡을 수 있는 구역(x ≤ 430)을 파고들어, 그 부분을 누르면 칩이 아니라 스틱이
+ *    잡혔다 — 칩의 왼쪽 절반이 손가락에게는 없는 버튼이었다.
+ * 2. **너무 납작했다.** 하단 밴드가 40px 뿐이라 칩 자체는 키울 수 없지만, 판정은
+ *    위쪽(플레이 영역)으로 넓힐 수 있다. 70px 로 잡으면 0.625 배 화면에서
+ *    약 44 CSS px 이 된다.
+ * 오른쪽 끝(684)은 액션 패드 판정이 시작되는 x(698)보다 왼쪽이라 겹치지 않는다.
+ */
 export const HINT_HITS: readonly HitRect[] = [
-  { id: 'HINT', x: HINT_BTN.x - 6, y: HINT_BTN.y - 8, w: HINT_BTN.w + 12, h: HINT_BTN.h + 14 },
-  { id: 'SKIP', x: SKIP_BTN.x - 6, y: SKIP_BTN.y - 8, w: SKIP_BTN.w + 12, h: SKIP_BTN.h + 14 },
+  { id: 'HINT', x: HINT_BTN.x - 6, y: HINT_BTN.y - 40, w: HINT_BTN.w + 12, h: HINT_BTN.h + 42 },
+  { id: 'SKIP', x: SKIP_BTN.x - 6, y: SKIP_BTN.y - 40, w: SKIP_BTN.w + 12, h: SKIP_BTN.h + 42 },
 ];
 
 /** 점이 사각형 안인가. 경계는 포함한다. */
@@ -2322,10 +2352,40 @@ function drawStick(ctx: CanvasRenderingContext2D, v: TouchView): void {
  * 화면 조작 버튼 + 조이스틱. PLAY 중에만, 그리고 슬롯 선택 오버레이가 떠 있지
  * 않을 때만 그린다(그때는 화면 전체가 선택 패널이다).
  */
+/**
+ * 이 패드가 **목표물(탈출구·CORE)을 덮고 있는가.**
+ *
+ * 조작 버튼은 화면 좌표에 못 박혀 있고 방은 스테이지마다 다르다. 그래서 어떤
+ * 방에서는 하필 나가야 할 문 위에 가장 큰 버튼이 앉는다(실측: 9번은 탈출구가
+ * COMMIT 아래, 15번은 INTERACT 아래). 버튼을 옮겨서 풀 수 있는 문제가 아니다 —
+ * 다음 스테이지에서 다른 것이 걸릴 뿐이다.
+ *
+ * 그래서 **가릴 때만 그 버튼을 옅게** 만든다. 판정은 그대로라 조작은 안 바뀌고,
+ * 목표물은 버튼 너머로 비쳐 보인다.
+ */
+function padCoversGoal(pad: TouchPad, s: Session, cam: { x: number; y: number }): boolean {
+  if (pad.shape !== 'circle') return false;
+  const sim = s.sim;
+  const pts: { x: number; y: number }[] = [
+    { x: cam.x + (sim.escape.x + sim.escape.w / 2) / SUBPIXEL,
+      y: cam.y + (sim.escape.y + sim.escape.h / 2) / SUBPIXEL },
+  ];
+  if (!sim.loot.taken) {
+    pts.push({ x: cam.x + sim.loot.x / SUBPIXEL + 12, y: cam.y + sim.loot.y / SUBPIXEL + 12 });
+  }
+  for (const q of pts) {
+    const dx = q.x - pad.cx;
+    const dy = q.y - pad.cy;
+    if (dx * dx + dy * dy <= pad.r * pad.r) return true;
+  }
+  return false;
+}
+
 export function drawTouchControls(
   ctx: CanvasRenderingContext2D,
   s: Session,
   v: TouchView,
+  cam: { x: number; y: number },
 ): void {
   if (v.context !== 'PLAY') return;
 
@@ -2334,9 +2394,15 @@ export function drawTouchControls(
 
   const hotE = nearInteractable(s);
   const canQ = s.overwriteLeft > 0;
+  const hasFlash = s.sim.bodies.some((b) => b.isLive && b.hasFlash);
 
   for (const pad of TOUCH_PADS) {
     const pressed = down.has(pad.id);
+    // 목표물을 덮고 있으면 옅게. 누르고 있는 동안은 원래 밝기로 돌려 준다 —
+    // 손가락이 닿았는데 반응이 안 보이면 눌린 건지 알 수 없다.
+    const veil = !pressed && padCoversGoal(pad, s, cam);
+    ctx.save();
+    if (veil) ctx.globalAlpha = 0.3;
     switch (pad.id) {
       case 'COMMIT': {
         // 이 게임의 핵심 동작 — 가장 크고, 사선을 두르고, 두 줄 라벨을 갖는다.
@@ -2390,6 +2456,16 @@ export function drawTouchControls(
         stencil(ctx, pad.label, pad.cx, pad.cy + 5, 15, withAlpha(C_DANGER, 0.95), 'center');
         break;
       }
+      case 'FLASH': {
+        // **들고 있을 때만 그린다.** 없는 아이템의 버튼이 상시로 화면을 차지하면
+        // 그 자리만큼 방이 안 보인다. 이 자리에는 다른 패드가 없으므로, 안 그려진
+        // 동안 눌러도 아무 일도 일어나지 않는다(시뮬이 `hasFlash` 로 다시 거른다).
+        if (!hasFlash) break;
+        padCircle(ctx, pad, C_LOOT, pressed, true);
+        stencil(ctx, 'F', pad.cx, pad.cy + 2, 17, withAlpha(C_LOOT, 0.95), 'center');
+        stencil(ctx, pad.sub, pad.cx, pad.cy + 20, 8, C_STENCIL_DIM, 'center', 'normal');
+        break;
+      }
       case 'PAUSE': {
         padCircle(ctx, pad, C_EDGE, pressed, true);
         ctx.fillStyle = withAlpha(C_STENCIL, 0.85);
@@ -2400,6 +2476,7 @@ export function drawTouchControls(
       default:
         break;
     }
+    ctx.restore();
   }
 }
 
@@ -3056,7 +3133,10 @@ export function drawEnding(
 
 // ── 일시정지 ───────────────────────────────────────────────────────────────
 
-export function drawPause(ctx: CanvasRenderingContext2D): void {
+export function drawPause(
+  ctx: CanvasRenderingContext2D,
+  micSens: { level: number; steps: number } | null = null,
+): void {
   // drawHelp 와 같은 이유로 불투명하다. 단서를 펼쳐 둔 채 `ESC` 를 눌러도
   // 이 화면 아래에서 조용히 가려질 뿐, 두 패널이 겹쳐 읽히지 않는다.
   blackout(ctx);
@@ -3087,6 +3167,17 @@ export function drawPause(ctx: CanvasRenderingContext2D): void {
     });
     tapButton(ctx, PAUSE_RESUME_BTN, 'RESUME', C_STENCIL);
     tapButton(ctx, PAUSE_MUTE_BTN, '소리 켜기 / 끄기', C_STENCIL_DIM);
+    tapButton(ctx, PAUSE_HELP_BTN, '조작법', C_STENCIL_DIM);
+    // 마이크 감도는 LISTEN 일 때만 뜬다. 키보드 모드에서는 조절할 것이 없다.
+    if (micSens !== null) {
+      tapButton(ctx, PAUSE_MIC_DOWN, '−', C_STENCIL_DIM);
+      tapButton(ctx, PAUSE_MIC_UP, '+', C_STENCIL_DIM);
+      stencil(ctx, '마이크 감도', CANVAS_W / 2, 522, 11, C_STENCIL, 'center');
+      const dots = Array.from({ length: micSens.steps }, (_, i) =>
+        i < micSens.level ? '■' : '□',
+      ).join(' ');
+      text(ctx, dots, CANVAS_W / 2, 540, 11, C_TEXT_DIM, 'center');
+    }
     text(
       ctx,
       '잔상은 이동 경로가 아니라 내 조작 그대로를 재생한다. 루프마다 세계는 처음으로 되감기고, 과거의 내가 같은 키를 다시 누른다.',

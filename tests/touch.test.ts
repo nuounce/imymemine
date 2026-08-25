@@ -20,22 +20,27 @@ if (!('window' in globalThis)) {
 import { STAGES } from '../src/game/levels';
 import { createInput } from '../src/engine/input';
 import {
-  clampKnob,
-  createTouch,
-  mergeInput,
   PICK_PADS,
-  quantizeStick,
   STICK_DEAD_R,
+  STICK_HOME_X,
+  STICK_HOME_Y,
   STICK_R,
   STICK_RUN_R,
+  STICK_ZONE_MAX_X,
   TOUCH_PADS,
   TOUCH_TAN_22_5,
   TOUCH_TAN_SCALE,
+  clampKnob,
+  createTouch,
+  mergeInput,
+  quantizeStick,
 } from '../src/engine/touch';
+import { HELP_HITS, HINT_HITS, PAUSE_HITS } from '../src/render/hud';
 import {
   CANVAS_H,
   CANVAS_W,
   IN_DOWN,
+  IN_FLASH,
   IN_INTERACT,
   IN_LEFT,
   IN_RIGHT,
@@ -669,5 +674,106 @@ describe('터치: 조작 버튼 배치', () => {
       if (pad.id === 'COMMIT') continue;
       assert.ok(commit.r > pad.r, `${pad.id}(${pad.r}) 가 COMMIT(${commit.r}) 보다 크거나 같다`);
     }
+  });
+});
+
+// ── 손가락 크기 기하 (모바일 QA 2026-08-25 에서 나온 규칙) ─────────────────
+
+describe('터치: 패드 기하 — 손가락이 닿을 수 있는가', () => {
+  /**
+   * 캔버스가 가장 많이 줄어드는 실사용 해상도의 배율.
+   * 360×800 세로 → 800×360 가로에서 캔버스는 576×360 = 0.6 배가 된다.
+   */
+  const MIN_SCALE = 0.6;
+  /** Android 권장 최소 터치 타깃. iOS 는 44 라 이 값을 넘기면 둘 다 만족한다. */
+  const MIN_CSS = 48;
+
+  const circles = TOUCH_PADS.filter((p) => p.shape === 'circle');
+
+  it('모든 원형 패드가 0.6 배 화면에서 48 CSS px 이상이다', () => {
+    const bad = circles
+      .map((p) => ({ id: p.id, css: +(p.hitR * 2 * MIN_SCALE).toFixed(1) }))
+      .filter((r) => r.css < MIN_CSS);
+    assert.deepEqual(bad, [], `작은 패드: ${JSON.stringify(bad)}`);
+  });
+
+  it('어떤 두 패드의 판정 원도 겹치지 않는다 — 옆 버튼이 눌리면 되돌릴 수 없다', () => {
+    const clashes: string[] = [];
+    for (let i = 0; i < circles.length; i++) {
+      for (let j = i + 1; j < circles.length; j++) {
+        const a = circles[i]!;
+        const b = circles[j]!;
+        const d = Math.hypot(a.cx - b.cx, a.cy - b.cy);
+        if (d < a.hitR + b.hitR) {
+          clashes.push(`${a.id}↔${b.id} 거리 ${d.toFixed(0)} < ${a.hitR + b.hitR}`);
+        }
+      }
+    }
+    assert.deepEqual(clashes, [], clashes.join(' · '));
+  });
+
+  it('판정 원이 캔버스 밖으로 나가지 않는다', () => {
+    for (const p of circles) {
+      assert.ok(p.cx - p.hitR >= 0 && p.cx + p.hitR <= CANVAS_W, `${p.id} 가로 이탈`);
+      assert.ok(p.cy - p.hitR >= 0 && p.cy + p.hitR <= CANVAS_H, `${p.id} 세로 이탈`);
+    }
+  });
+
+  it('판정 반지름은 그리는 반지름보다 작지 않다', () => {
+    for (const p of circles) assert.ok(p.hitR >= p.r, `${p.id}`);
+  });
+
+  it('구조 지원 칩이 조이스틱 구역을 침범하지 않는다', () => {
+    // 침범하면 그 부분을 눌렀을 때 칩이 아니라 스틱이 잡힌다 — 손가락에게는
+    // 없는 버튼이 된다. 실제로 예전 x(352·488)가 이 문제를 갖고 있었다.
+    for (const h of HINT_HITS) {
+      assert.ok(h.x > STICK_ZONE_MAX_X, `${h.id} 가 스틱 구역(x≤${STICK_ZONE_MAX_X})을 파고든다`);
+    }
+  });
+
+  it('사각 탭 영역(구조 지원 칩·? 버튼)이 액션 패드 판정과 겹치지 않는다', () => {
+    for (const h of [...HINT_HITS, ...HELP_HITS]) {
+      for (const p of circles) {
+        const nx = Math.max(h.x, Math.min(p.cx, h.x + h.w));
+        const ny = Math.max(h.y, Math.min(p.cy, h.y + h.h));
+        const d = Math.hypot(p.cx - nx, p.cy - ny);
+        assert.ok(d >= p.hitR, `${h.id} ↔ ${p.id} 겹침 (거리 ${d.toFixed(0)} < ${p.hitR})`);
+      }
+    }
+  });
+
+  it('구조 지원 칩과 일시정지 버튼이 0.625 배에서 40 CSS px 이상이다', () => {
+    // 하단 밴드가 40px 뿐이라 칩 자체는 못 키운다 — 판정만 위로 넓혔다.
+    for (const h of [...HINT_HITS, ...PAUSE_HITS]) {
+      const css = Math.min(h.w, h.h) * 0.625;
+      assert.ok(css >= 40, `${h.id} 짧은 변 ${css.toFixed(1)} CSS px`);
+    }
+  });
+});
+
+describe('터치: 섬광탄', () => {
+  function make(): { canvas: FakeCanvas; touch: ReturnType<typeof createTouch> } {
+    const canvas = new FakeCanvas();
+    const touch = createTouch({ canvas: canvas as unknown as HTMLCanvasElement });
+    return { canvas, touch };
+  }
+
+  it('섬광탄 패드가 존재하고 IN_FLASH 를 만든다', () => {
+    const pad = TOUCH_PADS.find((p) => p.id === 'FLASH');
+    assert.ok(pad !== undefined, '섬광탄 패드가 없다');
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    canvas.dispatchEvent(pointer('pointerdown', 1, pad.cx, pad.cy));
+    assert.equal(touch.mask() & IN_FLASH, IN_FLASH, '패드를 눌렀는데 IN_FLASH 가 안 선다');
+    canvas.dispatchEvent(pointer('pointerup', 1, pad.cx, pad.cy));
+    assert.equal(touch.mask() & IN_FLASH, 0, '떼었는데 IN_FLASH 가 남는다');
+  });
+
+  it('조이스틱은 IN_FLASH 를 만들지 않는다 — 이동이 아이템을 터뜨리면 안 된다', () => {
+    const { canvas, touch } = make();
+    touch.setContext('PLAY');
+    canvas.dispatchEvent(pointer('pointerdown', 1, STICK_HOME_X, STICK_HOME_Y));
+    canvas.dispatchEvent(pointer('pointermove', 1, STICK_HOME_X + 60, STICK_HOME_Y));
+    assert.equal(touch.mask() & IN_FLASH, 0);
   });
 });

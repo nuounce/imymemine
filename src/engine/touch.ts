@@ -19,6 +19,7 @@ import {
   CANVAS_H,
   CANVAS_W,
   IN_DOWN,
+  IN_FLASH,
   IN_INTERACT,
   IN_LEFT,
   IN_RIGHT,
@@ -45,7 +46,7 @@ export const STICK_RUN_R = 42;
 export const STICK_DEAD_R = 12;
 
 /** 조이스틱을 새로 잡을 수 있는 영역(왼쪽 아래). 액션 패드 판정 뒤에 검사한다. */
-const STICK_ZONE_MAX_X = 430;
+export const STICK_ZONE_MAX_X = 430;
 const STICK_ZONE_MIN_Y = 236;
 
 /** 8방향 섹터 판정용 고정소수 스케일. sim/constants 의 TAN_SCALE 과 같은 규약. */
@@ -104,6 +105,7 @@ export type PadId =
   | 'COMMIT'
   | 'INTERACT'
   | 'OVERWRITE'
+  | 'FLASH'
   | 'RESET'
   | 'PAUSE'
   | 'SLOT1'
@@ -117,7 +119,15 @@ export interface TouchPad {
   shape: 'circle' | 'rect';
   cx: number;
   cy: number;
+  /** **그리는** 반지름. 아트 디렉션이 정한 크기다. */
   r: number;
+  /**
+   * **판정** 반지름. 손가락은 그림보다 크고, 캔버스는 작은 화면에서 0.53배까지
+   * 줄어든다 — 그리는 크기를 그대로 판정에 쓰면 320px 화면에서 일시정지 패드가
+   * 22 CSS px 이 된다(권장 44). 그래서 판정만 따로 키운다.
+   * 대신 **어떤 두 패드의 판정 원도 겹치지 않는다** — touch.test.ts 가 증명한다.
+   */
+  hitR: number;
   x: number;
   y: number;
   w: number;
@@ -126,13 +136,34 @@ export interface TouchPad {
   sub: string;
 }
 
-function circle(id: PadId, cx: number, cy: number, r: number, label: string, sub = ''): TouchPad {
-  return { id, shape: 'circle', cx, cy, r, x: cx - r, y: cy - r, w: r * 2, h: r * 2, label, sub };
+/**
+ * 원형 패드. `hit` 를 생략하면 그리는 반지름을 그대로 판정에 쓴다.
+ *
+ * 판정 반지름의 하한을 40 으로 잡은 근거: 캔버스가 가장 많이 줄어드는 실사용
+ * 해상도는 360×800 세로 → 800×360 가로의 0.6 배다. 지름 80 × 0.6 = 48 CSS px 로
+ * Android 권장(48)을 만족하고 iOS 권장(44)을 넘는다.
+ */
+function circle(
+  id: PadId,
+  cx: number,
+  cy: number,
+  r: number,
+  label: string,
+  sub = '',
+  hit = r,
+): TouchPad {
+  return {
+    id, shape: 'circle', cx, cy, r, hitR: Math.max(r, hit),
+    x: cx - r, y: cy - r, w: r * 2, h: r * 2, label, sub,
+  };
 }
 
 function rect(id: PadId, x: number, y: number, w: number, h: number, label: string, sub = ''): TouchPad {
-  return { id, shape: 'rect', cx: x + w / 2, cy: y + h / 2, r: 0, x, y, w, h, label, sub };
+  return { id, shape: 'rect', cx: x + w / 2, cy: y + h / 2, r: 0, hitR: 0, x, y, w, h, label, sub };
 }
+
+/** 원형 패드 판정 반지름의 하한. 위 주석의 계산에서 나온 값이다. */
+export const MIN_HIT_R = 40;
 
 /**
  * PLAY 중의 액션 패드. 오른쪽 하단에 모아 두되 **조작 중인 몸(I)이 있는 화면 중앙과
@@ -140,11 +171,14 @@ function rect(id: PadId, x: number, y: number, w: number, h: number, label: stri
  * `COMMIT` 이 압도적으로 큰 이유는 이 게임의 핵심 동작이기 때문이다.
  */
 export const TOUCH_PADS: readonly TouchPad[] = [
-  circle('COMMIT', 862, 492, 54, 'COMMIT', '잔상 남기기'),
-  circle('INTERACT', 754, 442, 36, 'E', '상호작용'),
-  circle('OVERWRITE', 754, 524, 32, 'Q', '덮어쓰기'),
-  circle('RESET', 926, 398, 26, '⟲', '초기화'),
-  circle('PAUSE', 926, 74, 21, 'II', ''),
+  circle('COMMIT', 858, 486, 54, 'COMMIT', '잔상 남기기'),
+  // 섬광탄은 **들고 있을 때만** 그려진다(hud). 판정도 그때만 살아난다 —
+  // 없는 아이템을 누를 자리가 상시로 화면을 차지하면 손해다.
+  circle('FLASH', 858, 372, 34, 'F', '섬광탄', MIN_HIT_R),
+  circle('INTERACT', 738, 430, 36, 'E', '상호작용', MIN_HIT_R),
+  circle('OVERWRITE', 738, 524, 32, 'Q', '덮어쓰기', MIN_HIT_R),
+  circle('RESET', 918, 290, 26, '⟲', '초기화', MIN_HIT_R),
+  circle('PAUSE', 918, 74, 21, 'II', '', MIN_HIT_R),
 ];
 
 /**
@@ -177,7 +211,8 @@ function hitPad(pad: TouchPad, x: number, y: number): boolean {
   if (pad.shape === 'circle') {
     const dx = x - pad.cx;
     const dy = y - pad.cy;
-    return dx * dx + dy * dy <= pad.r * pad.r;
+    // **그리는 반지름이 아니라 판정 반지름**으로 잰다.
+    return dx * dx + dy * dy <= pad.hitR * pad.hitR;
   }
   return x >= pad.x && x <= pad.x + pad.w && y >= pad.y && y <= pad.y + pad.h;
 }
@@ -477,6 +512,9 @@ export function createTouch(opts: TouchOptions): TouchInput {
       if (context !== 'PLAY') return 0;
       let m = stickId >= 0 ? quantizeStick(dx, dy) : 0;
       if (padDown('INTERACT')) m |= IN_INTERACT;
+      // 섬광탄. 시뮬은 **누른 순간의 엣지**만 보므로(world.ts 가 직전 마스크와 비교)
+      // 여기서는 키보드 `F` 와 똑같이 눌린 동안 비트를 세워 두면 된다.
+      if (padDown('FLASH')) m |= IN_FLASH;
       return m;
     },
 
