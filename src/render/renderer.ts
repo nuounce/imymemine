@@ -1605,6 +1605,26 @@ function drawGates(
     // 밝기는 이 문이 서 있는 자리의 광량을 따른다 — 강철이라 스스로 빛나지 않는다.
     const k = shadeAt(s, x + w / 2, y + h / 2);
 
+    // 셔터는 4프레임(1 완전 열림 → 4 완전 닫힘)이다. 보간값 `a` 를 그대로
+    // 프레임에 눕히므로 **그림이 열린 정도와 항상 일치**한다 — 판정은 채널이
+    // 하고, 여기는 그 상태를 읽어 그리기만 한다.
+    if (sprites.has("gate")) {
+      const cell = sprites.cellOf("gate");
+      const step = cell === undefined ? TILE : cell.w;
+      const col = Math.max(0, Math.min(3, Math.round((1 - a) * 3)));
+      for (let ty = 0; ty < h; ty += step) {
+        for (let tx = 0; tx < w; tx += step) {
+          sprites.draw(ctx, "gate", col, 0, x + tx, y + ty);
+        }
+      }
+      // 열린 문에는 지나갈 수 있다는 초록 바닥 신호만 얹는다.
+      if (a > 0.999) {
+        ctx.fillStyle = withAlpha(C_ON, 0.12);
+        ctx.fillRect(x, y, w, h);
+      }
+      continue;
+    }
+
     // 문틀(문턱)은 항상 보인다 — 닫힌 문이 사라지면 길인지 벽인지 헷갈린다.
     // 콘크리트에 박힌 강철 레일이므로 어두운 홈 + 빛 받는 립 한 줄로 그린다.
     ctx.fillStyle = withAlpha(C_METAL_DARK, 0.85);
@@ -2451,7 +2471,19 @@ function drawGoals(
 
   // 봉인 상태의 출구는 **강철 셔터**다. 빛나는 사각형이 아니라 벽에 박힌 금속판이라야
   // "여긴 아직 못 나간다"가 세계의 물건으로 읽힌다. 열리면 초록 신호가 그 위에 켜진다.
-  if (!unlocked) {
+  // 출구 시트는 4프레임이다 — 1·2 봉인(먼지 반짝임), 3·4 개방(초록 점선 흐름).
+  // 2타일짜리 출구(1·5·7·12번)에서는 같은 셀을 가로로 이어 붙인다.
+  const exitSprite = sprites.has("exit");
+  if (exitSprite) {
+    const cell = sprites.cellOf("exit");
+    const step = cell === undefined ? TILE : cell.w;
+    const col = (unlocked ? 2 : 0) + (Math.floor(view.frame / 18) % 2);
+    for (let ty = 0; ty < eh; ty += step) {
+      for (let tx = 0; tx < ew; tx += step) {
+        sprites.draw(ctx, "exit", col, 0, ex + tx, ey + ty);
+      }
+    }
+  } else if (!unlocked) {
     const k = shadeAt(s, ex + ew / 2, ey + eh / 2);
     ctx.fillStyle = mulHex(C_ESCAPE_LOCKED, k * 0.8);
     ctx.fillRect(ex, ey, ew, eh);
