@@ -359,7 +359,11 @@ export interface LevelDef {
   par: number;
   /** 각 줄의 길이가 모두 같아야 한다. */
   tiles: string[];
-  /** 한 문장 힌트. 화면 하단에 조용히 표시. */
+  /**
+   * 결정적 한 문장 힌트. 실패가 쌓여 `T ▸ HINT` 가 열렸을 때만 화면에 나온다
+   * (hud.ts drawHintBanner) — 스스로 풀 기회를 다 쓴 사람에게 주는 답이므로
+   * 뭉뚱그리지 말고 그 방의 핵심 배정을 말해야 한다 (PLAYER-GUIDE.md 기준).
+   */
   hint: string;
   channelMode?: Record<string, 'AND' | 'OR'>;
   plates?: { tx: number; ty: number; channel: string }[];
