@@ -660,7 +660,7 @@ const HELP_GROUPS: readonly HelpGroup[] = [
         keys: ['Q', '1 / 2 / 3'],
         touchKeys: ['Q'],
         join: '+',
-        line: '잔상 하나를 지우고 그 자리를 다시 녹화 — 스테이지당 1회',
+        line: '잔상 하나를 지우고 그 자리에 다시 남긴다 — 스테이지당 1회',
       },
       {
         keys: ['BACKSPACE'],
@@ -1278,7 +1278,7 @@ function drawRescueChips(ctx: CanvasRenderingContext2D, s: Session): void {
     const armed = s.skipArm > 0;
     const label = touchUi
       ? armed
-        ? '한 번 더!'
+        ? '한 번 더 ▸ 확인'
         : '건너뛰기'
       : armed
         ? 'N ▸ 확인'
@@ -1842,10 +1842,10 @@ function drawTouchPicker(ctx: CanvasRenderingContext2D, s: Session): void {
   frame(ctx, p.x, p.y, p.w, p.h, C_LOOT, 0.55, 2);
   rivets(ctx, p.x, p.y, p.w, p.h);
 
-  stencilBig(ctx, '다시 녹화할 잔상을 고르시오', CANVAS_W / 2, p.y + 52, 22, C_LOOT, C_PLATE);
+  stencilBig(ctx, '잔상 덮어쓰기 — 대상 선택', CANVAS_W / 2, p.y + 52, 22, C_LOOT, C_PLATE);
   stencil(
     ctx,
-    '고른 잔상은 지워지고 이번 루프를 새로 녹화한다 — 스테이지당 1회',
+    '고른 잔상은 지워지고 이번 루프를 그 자리에 새로 남긴다 — 스테이지당 1회',
     CANVAS_W / 2,
     p.y + 74,
     10,
@@ -3195,7 +3195,7 @@ export function drawPause(
     ['SHIFT', '달리기 — 발소리가 나고, 경비(WARDEN)가 소리를 듣고 온다'],
     ['E', '버튼 / 레버 상호작용'],
     ['R', '루프 조기 확정 → 지금까지의 나를 잔상으로 남긴다'],
-    ['Q → 1/2/3', '잔상 하나를 지우고 다시 녹화 (스테이지당 1회)'],
+    ['Q → 1/2/3', '잔상 하나를 지우고 다시 남기기 (스테이지당 1회)'],
     ['BACKSPACE 2초', '스테이지 전체 초기화 — DEBT +1, 절대 안 지워진다'],
     ['M', '뮤트'],
     ['− / =', 'LISTEN 모드 마이크 감도 — 주변이 시끄러우면 낮춘다'],
