@@ -166,10 +166,10 @@ describe('§3-1 잔상은 테이프가 끝나도 사라지지 않고 마지막 �
   });
 });
 
-// ── 2. 4번째 확정 = 강제 초기화 (SPEC §1.1) ───────────────────────────────
+// ── 2. 마지막 몸(슬롯 소진)에서의 확정 (SPEC §1.1) ────────────────────────
 
-describe('§1.1 잔상 3개가 찬 뒤 또 확정하면 전체 초기화 + DEBT', () => {
-  it('잔상이 0으로 리셋되고 DEBT 가 1 오른다', () => {
+describe('§1.1 잔상 3개가 찬 마지막 몸 — 강제 확정만 LOOP FAILED, R 은 차단된다', () => {
+  it('강제 확정(TIMEUP)은 잔상 0 으로 리셋되고 DEBT 가 1 오른다', () => {
     const s = createSession();
     startStage(s, 0);
     for (let i = 0; i < MAX_AFTERIMAGES; i++) commitLoopOfLength(s, 10);
@@ -177,12 +177,35 @@ describe('§1.1 잔상 3개가 찬 뒤 또 확정하면 전체 초기화 + DEBT'
     assert.equal(s.debt, 0);
 
     for (let i = 0; i < 10; i++) tickSession(s, 0);
-    commitLoop(s, 'MANUAL');
+    assert.equal(commitLoop(s, 'TIMEUP'), true, '강제 확정이 무시됐다');
 
     assert.equal(s.ghosts.length, 0, '4번째 확정인데 잔상이 남아 있다');
     assert.equal(s.debt, 1, 'DEBT 가 오르지 않았다');
     assert.equal(s.phase, 'TRANSITION');
     assert.equal(s.transitionMsg[0], 'NO ONE LEFT TO BECOME.');
+  });
+
+  it('R(MANUAL) 은 차단된다 — 진행이 그대로 남고 공지 한 줄만 뜬다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    for (let i = 0; i < MAX_AFTERIMAGES; i++) commitLoopOfLength(s, 10);
+    assert.equal(s.ghosts.length, MAX_AFTERIMAGES);
+
+    for (let i = 0; i < 10; i++) tickSession(s, 0);
+    const tickBefore = s.sim.tick;
+    assert.equal(commitLoop(s, 'MANUAL'), false, '차단돼야 할 R 확정이 통과됐다');
+
+    assert.equal(s.ghosts.length, MAX_AFTERIMAGES, '차단인데 잔상이 변했다');
+    assert.equal(s.debt, 0, '차단인데 DEBT 가 올랐다');
+    assert.equal(s.phase, 'PLAY', '차단인데 페이즈가 넘어갔다');
+    assert.equal(s.sim.tick, tickBefore, '차단인데 월드가 리셋됐다');
+    assert.notEqual(s.notice, null, '차단 안내 공지가 없다');
+    assert.ok(s.noticeTimer > 0);
+
+    // 공지는 시간이 지나면 스스로 걷힌다 — 시뮬은 계속 흐른다.
+    const ttl = s.noticeTimer;
+    for (let i = 0; i < ttl; i++) tickSession(s, 0);
+    assert.equal(s.notice, null, '공지가 시한 뒤에도 남아 있다');
   });
 });
 

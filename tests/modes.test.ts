@@ -162,7 +162,7 @@ describe('GAUNTLET: DEBT 는 스테이지를 넘어도 누적되고 리셋되지
     assert.ok(s.debt >= 2 + stages - 1);
   });
 
-  it('4번째 확정(LOOP FAILED)의 강제 초기화도 부채로 남는다', () => {
+  it('4번째 강제 확정(LOOP FAILED)의 초기화도 부채로 남는다', () => {
     const s = newSession('GAUNTLET');
     for (let i = 0; i < MAX_AFTERIMAGES; i++) {
       runTicks(s, 10);
@@ -172,7 +172,7 @@ describe('GAUNTLET: DEBT 는 스테이지를 넘어도 누적되고 리셋되지
     assert.equal(s.debt, 0);
 
     runTicks(s, 10);
-    commitLoop(s, 'MANUAL'); // 남길 나가 없다 → 강제 초기화
+    commitLoop(s, 'TIMEUP'); // 남길 나가 없는데 강제 확정 → 초기화 (R 은 차단된다)
     assert.equal(s.ghosts.length, 0);
     assert.equal(s.debt, 1);
 

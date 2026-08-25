@@ -28,7 +28,9 @@ export type MetaKey =
   | 'PAUSE' // Esc
   | 'START' // Enter — 시작 / 다음 스테이지
   | 'MUTE' // M
-  | 'HELP'; // H / ? — 조작법 패널 열고 닫기
+  | 'HELP' // H / ? — 조작법 패널 열고 닫기
+  | 'HINT' // T — 힌트 배너 (실패 5회부터)
+  | 'SKIP'; // N — 스테이지 포기 (STORY · 실패 10회부터 · 2회 확인)
 
 export interface Input {
   /** 이번 틱의 녹화 대상 입력 비트마스크. */
@@ -76,6 +78,8 @@ const META_BY_CODE: Readonly<Record<string, MetaKey>> = {
   KeyM: 'MUTE',
   KeyH: 'HELP',
   Slash: 'HELP',
+  KeyT: 'HINT',
+  KeyN: 'SKIP',
 };
 
 /** 눌렸을 때 브라우저 기본 동작을 막아야 하는 키(뒤로가기·스크롤·검색 등). */

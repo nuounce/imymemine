@@ -28,10 +28,12 @@ import {
   nextStage,
   PLAY_MODES,
   requestOverwrite,
+  requestSkip,
   runTotals,
   setPlayMode,
   startRun,
   tickSession,
+  toggleHint,
   type Mode,
   type PlayMode,
   type Session,
@@ -47,6 +49,7 @@ import {
   drawTouchControls,
   drawTransition,
   HELP_HITS,
+  HINT_HITS,
   hitTest,
   isHelpOpen,
   learnPrompt,
@@ -640,6 +643,8 @@ function handleMeta(): void {
     input.consumePressed('SLOT1');
     input.consumePressed('SLOT2');
     input.consumePressed('SLOT3');
+    input.consumePressed('HINT');
+    input.consumePressed('SKIP');
     session.resetHold = 0;
     return;
   }
@@ -655,8 +660,25 @@ function handleMeta(): void {
     input.consumePressed('SLOT1');
     input.consumePressed('SLOT2');
     input.consumePressed('SLOT3');
+    input.consumePressed('HINT');
+    input.consumePressed('SKIP');
     session.resetHold = 0;
     return;
+  }
+
+  // ── 구조 지원: 힌트 배너 / 스테이지 포기 ──
+  // 잠금 조건(실패 수·모드)은 세션 함수가 판정한다 — 잠겨 있으면 조용히 무시된다.
+  if (input.consumePressed('HINT')) {
+    if (toggleHint(session)) audio.interact();
+  }
+  if (input.consumePressed('SKIP')) {
+    const r = requestSkip(session);
+    if (r === 'ARMED') audio.interact();
+    else if (r === 'SKIPPED') {
+      audio.door();
+      resetSfxEdges();
+      input.flush();
+    }
   }
 
   // ── 덮어쓰기 모드 ──
@@ -684,9 +706,13 @@ function handleMeta(): void {
   if (input.consumePressed('COMMIT')) {
     learnPrompt('COMMIT');
     if (!session.awaitingOverwritePick) {
-      commitLoop(session, 'MANUAL');
-      audio.commit();
-      resetSfxEdges();
+      // 마지막 몸(슬롯 소진)에서는 차단되고 안내 공지만 뜬다 — 확정음을 내면 거짓말이 된다.
+      if (commitLoop(session, 'MANUAL')) {
+        audio.commit();
+        resetSfxEdges();
+      } else {
+        audio.interact();
+      }
     }
   }
 
@@ -762,6 +788,25 @@ function handlePauseTap(x: number, y: number): void {
   }
 }
 
+/**
+ * 구조 지원 칩(힌트/건너뛰기) 탭·클릭. 터치 탭과 마우스 클릭이 같은 경로를 탄다.
+ * 칩이 잠겨 있으면(실패 부족·모드 불일치) 세션 함수가 조용히 무시한다.
+ */
+function handleRescueTap(x: number, y: number): void {
+  const id = hitTest(HINT_HITS, x, y);
+  if (id === 'HINT') {
+    if (toggleHint(session)) audio.interact();
+  } else if (id === 'SKIP') {
+    const r = requestSkip(session);
+    if (r === 'ARMED') audio.interact();
+    else if (r === 'SKIPPED') {
+      audio.door();
+      resetSfxEdges();
+      input.flush();
+    }
+  }
+}
+
 function handleTaps(): void {
   const taps = touch.consumeTaps();
   for (const t of taps) {
@@ -787,6 +832,8 @@ function handleTaps(): void {
         if (session.paused) handlePauseTap(t.x, t.y);
         // 우상단 `?`. 패드가 먹지 않은 탭만 여기 오므로 조이스틱과 겹치지 않는다.
         else if (hitTest(HELP_HITS, t.x, t.y) === 'HELP') setHelpOpen(true);
+        // 하단 밴드의 구조 지원 칩. 잠금 판정은 세션 함수가 다시 거른다.
+        else handleRescueTap(t.x, t.y);
         break;
       case 'CLEAR':
       case 'ALLCLEAR':
@@ -1047,6 +1094,10 @@ cv.addEventListener('pointerdown', (e) => {
       if (id === 'PLAY' && session.mode === 'LISTEN') mic.start();
       handleTitleTap(p.x, p.y);
     }
+  } else if (session.phase === 'PLAY' && !session.paused && !isHelpOpen()) {
+    // 구조 지원 칩은 "버튼"이다 — 키보드(T/N)뿐 아니라 마우스 클릭으로도 눌린다.
+    const p = canvasPoint(cv, e.clientX, e.clientY);
+    handleRescueTap(p.x, p.y);
   }
 });
 window.addEventListener('keydown', () => audio.resume(), { once: true });
@@ -1102,6 +1153,8 @@ if (import.meta.env.DEV) {
     START: 'Enter',
     MUTE: 'KeyM',
     HELP: 'KeyH',
+    HINT: 'KeyT',
+    SKIP: 'KeyN',
   };
 
   /**
@@ -1144,6 +1197,10 @@ if (import.meta.env.DEV) {
         medal: s.medal,
         paused: s.paused,
         awaitingOverwritePick: s.awaitingOverwritePick,
+        failCount: s.failCount,
+        hintOpen: s.hintOpen,
+        skipArm: s.skipArm,
+        notice: s.notice,
         // I(조작 중인 몸)의 타일 좌표. AABB 중심 기준. 몸이 없으면 -1,-1.
         i:
           me === undefined

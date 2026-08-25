@@ -9,9 +9,13 @@
  */
 
 import {
+  HINT_UNLOCK_FAILS,
   LOOP_TRANSITION_TICKS,
   MAX_AFTERIMAGES,
+  NOTICE_TICKS,
   OVERWRITE_PER_STAGE,
+  SKIP_ARM_TICKS,
+  SKIP_UNLOCK_FAILS,
   SLOT_NAMES,
 } from '../sim/constants';
 import type { InputMask, LevelDef, SimState, Tape, TickEvents } from '../sim/types';
@@ -136,6 +140,19 @@ export interface Session {
   lastEvents: TickEvents;
   resetHold: number;
   paused: boolean;
+  /**
+   * 이 스테이지에서 몸을 잃은 횟수(체포·시간 소진·전체 초기화).
+   * R 조기 확정은 전략이라 세지 않는다. `fullReset` 을 넘어 살아남고
+   * 다른 스테이지로 넘어가야 0 이 된다 (sim/constants.ts 구조 지원 참조).
+   */
+  failCount: number;
+  /** `T` 로 연 힌트 배너가 떠 있는가. 스테이지를 넘으면 닫힌다. */
+  hintOpen: boolean;
+  /** 건너뛰기 확인 카운트다운. 0 보다 크면 다음 `N` 이 실제로 건너뛴다. */
+  skipArm: number;
+  /** 화면 하단 공지 한 줄 (차단된 R 안내 등). 시뮬에는 절대 닿지 않는다. */
+  notice: string | null;
+  noticeTimer: number;
   /** 런 누적치(끝난 스테이지들). 현재값은 `runTotals()` 로 읽는다. */
   run: RunAccum;
   /** 런이 끝났을 때만 채워진다. STORY 는 항상 null. */
@@ -208,6 +225,11 @@ export function createSession(): Session {
     lastEvents: emptyEvents(),
     resetHold: 0,
     paused: false,
+    failCount: 0,
+    hintOpen: false,
+    skipArm: 0,
+    notice: null,
+    noticeTimer: 0,
     run: emptyRun(),
     runResult: null,
   };
@@ -239,6 +261,13 @@ export function startStage(s: Session, stageIndex: number): void {
   s.transitionMsg = [];
   s.resetHold = 0;
   s.paused = false;
+  // 구조 지원 상태는 스테이지 소속이다. 같은 스테이지의 fullReset 이 이걸 보존해야
+  // 하면 fullReset 쪽이 debt 처럼 저장/복원한다 — 여기는 항상 깨끗이 시작한다.
+  s.failCount = 0;
+  s.hintOpen = false;
+  s.skipArm = 0;
+  s.notice = null;
+  s.noticeTimer = 0;
   beginLoop(s);
 }
 
@@ -259,37 +288,58 @@ function transitionCopy(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): s
 }
 
 /**
- * 지금 녹화 중인 런을 잔상으로 확정한다.
- * 잔상 슬롯이 이미 가득 찼는데 또 확정하면 LOOP FAILED — 전체 초기화 + DEBT (SPEC §1.1).
+ * 지금 녹화 중인 런을 잔상으로 확정한다. @returns 실제로 확정됐는가.
+ *
+ * 잔상 슬롯이 가득 찬 마지막 몸(MINE)에서는 사유에 따라 갈린다 (SPEC §1.1):
+ * - `MANUAL`(R) 은 **차단**된다. 마지막 몸을 제 손으로 확정해서 얻는 것은
+ *   아무것도 없고(전체 초기화와 동일한 결과는 BACKSPACE 가 이미 맡는다),
+ *   루프 내내 누르던 R 의 관성으로 스테이지 전체를 날리는 함정만 됐다.
+ * - `CAPTURED`/`TIMEUP` 강제 확정은 그대로 LOOP FAILED — 전체 초기화 + DEBT.
  */
-export function commitLoop(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): void {
-  if (s.phase !== 'PLAY') return;
+export function commitLoop(
+  s: Session,
+  reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP',
+): boolean {
+  if (s.phase !== 'PLAY') return false;
+
+  if (reason === 'MANUAL' && s.overwriteSlot === null && s.ghosts.length >= MAX_AFTERIMAGES) {
+    // 남길 자리가 없다 — 확정 대신 지금 할 수 있는 일을 알려 준다.
+    setNotice(s, '남길 자리가 없다 — 이 몸으로 끝내거나, Q 덮어쓰기 · BACKSPACE 초기화.');
+    return false;
+  }
+
   // 슬롯 선택 메뉴가 열린 채 TIMEUP/체포로 강제 확정될 수 있다 (선택 중에도
   // 세계는 흐른다). 플래그를 여기서 지우지 않으면 다음 루프가 오버레이 + 입력
   // 동결 상태로 시작하고, 1/2/3 이 스테이지당 1회뿐인 덮어쓰기를 오소모한다.
   // 확정은 사유가 무엇이든 선택 메뉴를 닫는다.
   s.awaitingOverwritePick = false;
+  // 몸을 잃는 확정만 실패로 센다. R 조기 확정은 전략적 배치다.
+  const failed = reason !== 'MANUAL';
   const tape = Uint16Array.from(s.recording);
   const corpse = reason === 'CAPTURED';
 
   if (s.overwriteSlot !== null) {
+    if (failed) s.failCount++;
     s.ghosts[s.overwriteSlot - 1] = { tape, corpse };
     s.overwriteSlot = null;
   } else if (s.ghosts.length >= MAX_AFTERIMAGES) {
-    // 4번째 몸까지 확정 = LOOP FAILED. fullReset 이 startStage 를 거치며 전환 상태를
-    // 전부 지우므로, 오버레이 카피와 페이즈는 **초기화 뒤에** 얹어야 한다 (SPEC §1.1).
+    // 마지막 몸까지 강제로 확정 = LOOP FAILED. fullReset 이 startStage 를 거치며
+    // 전환 상태를 전부 지우므로, 오버레이 카피와 페이즈는 **초기화 뒤에** 얹는다.
+    // 실패 카운트는 fullReset 이 +1 하므로 여기서 또 세지 않는다(이중 집계 방지).
     fullReset(s);
     s.transitionMsg = ['NO ONE LEFT TO BECOME.', 'THE STAGE FORGETS YOU.'];
     s.phase = 'TRANSITION';
     s.transitionTimer = LOOP_TRANSITION_TICKS;
-    return;
+    return true;
   } else {
+    if (failed) s.failCount++;
     s.ghosts.push({ tape, corpse });
   }
 
   s.transitionMsg = transitionCopy(s, reason);
   s.phase = 'TRANSITION';
   s.transitionTimer = LOOP_TRANSITION_TICKS;
+  return true;
 }
 
 /** `Q` 로 덮어쓰기 모드 진입. 남은 횟수와 지울 잔상이 있어야 한다. */
@@ -311,12 +361,79 @@ export function requestOverwrite(s: Session, slot: number): boolean {
   return true;
 }
 
-/** `Backspace` 2초 홀드. 공짜가 아니다 — DEBT 는 세션 내내 남는다. */
+/**
+ * `Backspace` 2초 홀드. 공짜가 아니다 — DEBT 는 세션 내내 남는다.
+ * 실패 카운트와 열어 둔 힌트도 초기화를 넘어 살아남는다 — 초기화를 반복하는
+ * 순간이 곧 막힌 순간이라, 여기서 지우면 구조 지원이 영영 열리지 않는다.
+ */
 export function fullReset(s: Session): void {
   const debt = s.debt + 1;
+  const fails = s.failCount + 1;
+  const hintOpen = s.hintOpen;
   const stage = s.stageIndex;
   startStage(s, stage);
   s.debt = debt;
+  s.failCount = fails;
+  s.hintOpen = hintOpen;
+}
+
+// ── 구조 지원 (힌트 · 건너뛰기) ────────────────────────────────────────────
+//
+// 무한 반복의 탈출구. 풀 수 없는 방 앞에서 게임이 해 줄 수 있는 일은 둘이다:
+// 결정적 힌트 한 줄(HINT_UNLOCK_FAILS), 그래도 안 되면 방을 포기하고 나아갈 길
+// (SKIP_UNLOCK_FAILS, STORY 한정 — 기록 모드의 성적을 오염시키면 안 된다).
+// 전부 세션/표시 레이어다. SimState 에는 한 비트도 닿지 않는다 (SPEC §4).
+
+/** 화면 하단 공지 한 줄. 같은 내용이면 타이머만 되감는다. */
+function setNotice(s: Session, text: string, ticks: number = NOTICE_TICKS): void {
+  s.notice = text;
+  s.noticeTimer = ticks;
+}
+
+/** 실패가 쌓여 `T ▸ HINT` 가 열렸는가. */
+export function hintUnlocked(s: Session): boolean {
+  return s.failCount >= HINT_UNLOCK_FAILS;
+}
+
+/** `T`. 열려 있으면 닫는다. @returns 상태가 실제로 바뀌었는가. */
+export function toggleHint(s: Session): boolean {
+  if (s.phase !== 'PLAY') return false;
+  if (!hintUnlocked(s)) return false;
+  s.hintOpen = !s.hintOpen;
+  return true;
+}
+
+/**
+ * 실패가 쌓여 `N ▸ SKIP` 이 열렸는가. STORY 한정 — GAUNTLET/TIME_ATTACK 은
+ * 성적이 걸린 런이라 건너뛰기가 기록의 의미를 부순다.
+ */
+export function skipUnlocked(s: Session): boolean {
+  return s.playMode === 'STORY' && s.failCount >= SKIP_UNLOCK_FAILS;
+}
+
+export type SkipResult = 'ARMED' | 'SKIPPED' | 'IGNORED';
+
+/**
+ * `N`. 첫 번째 누름은 무장(확인 요청)이고, `SKIP_ARM_TICKS` 안의 두 번째 누름이
+ * 실제로 방을 포기한다 — 되돌릴 수 없는 동작이라 한 번의 오타로 나가면 안 된다.
+ *
+ * 대가는 전체 초기화와 같은 DEBT +1 이다. 이 방에 남긴 잔상들을 두고 나가는
+ * 것이므로 시설의 회수(수율) 집계에 그대로 잡힌다 (STORY.md §2) — 엔딩이 갈린다.
+ */
+export function requestSkip(s: Session): SkipResult {
+  if (s.phase !== 'PLAY' || !skipUnlocked(s)) return 'IGNORED';
+  if (s.skipArm <= 0) {
+    s.skipArm = SKIP_ARM_TICKS;
+    setNotice(s, '이 방을 포기한다 — N 을 한 번 더 누르면 DEBT +1 로 다음 방.', SKIP_ARM_TICKS);
+    return 'ARMED';
+  }
+  const debt = s.debt + 1;
+  nextStage(s); // 마지막 스테이지면 ALLCLEAR — 엔딩은 그 순간의 DEBT 로 갈린다.
+  s.debt = debt;
+  if (s.phase === 'PLAY') {
+    setNotice(s, '방을 두고 왔다 — DEBT +1. 남긴 잔상은 회수된다.');
+  }
+  return 'SKIPPED';
 }
 
 export function nextStage(s: Session): void {
@@ -527,6 +644,10 @@ export function finishRun(s: Session): void {
 /** 1 틱 진행. TRANSITION/CLEAR 페이즈도 여기서 진행시킨다. */
 export function tickSession(s: Session, input: InputMask): void {
   if (s.paused) return;
+
+  // 공지와 건너뛰기 무장은 표시/확인용 카운트다운이라 페이즈와 무관하게 식는다.
+  if (s.noticeTimer > 0 && --s.noticeTimer === 0) s.notice = null;
+  if (s.skipArm > 0) s.skipArm--;
 
   if (s.phase === 'TRANSITION') {
     s.transitionTimer--;

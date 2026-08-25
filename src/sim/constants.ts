@@ -332,6 +332,22 @@ export const LOOP_TRANSITION_TICKS = 90; // 1.5초 — PRD의 "전환 < 2초" �
 /** 덮어쓰기는 스테이지당 정확히 1회. */
 export const OVERWRITE_PER_STAGE = 1;
 
+// ── 구조 지원 (막힌 플레이어를 위한 탈출구) ────────────────────────────────
+//
+// "실패"는 몸을 잃은 사건만 센다: 체포·시간 소진·전체 초기화. R 조기 확정은
+// 전략적 배치라 세지 않는다 — 잘하는 플레이어의 카운터가 올라가면 안 된다.
+// 카운터는 스테이지 단위이며 전체 초기화(fullReset)를 넘어 살아남는다 —
+// 초기화를 반복하는 그 순간이 바로 막힌 순간이기 때문이다.
+
+/** 이만큼 실패하면 `T ▸ HINT` 가 열린다. 스테이지의 결정적 한 줄을 보여 준다. */
+export const HINT_UNLOCK_FAILS = 5;
+/** 이만큼 실패하면 (STORY 한정) `N ▸ SKIP` 이 열린다. DEBT +1 을 대가로 다음 방으로. */
+export const SKIP_UNLOCK_FAILS = 10;
+/** 세션 공지 한 줄(차단된 R 안내 등)의 기본 노출 시간. 5초. */
+export const NOTICE_TICKS = 300;
+/** 건너뛰기 확인 창. 첫 N 이 무장시키고, 이 안에 한 번 더 눌러야 실행된다. 3초. */
+export const SKIP_ARM_TICKS = 180;
+
 // ── 입력 비트마스크 ────────────────────────────────────────────────────────
 export const IN_UP = 1;
 export const IN_DOWN = 2;

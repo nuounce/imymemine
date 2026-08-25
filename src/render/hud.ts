@@ -51,8 +51,10 @@ import {
 } from '../engine/touch';
 import {
   endingView,
+  hintUnlocked,
   loadBest,
   runTotals,
+  skipUnlocked,
   type BestRecord,
   type EndingId,
   type Mode,
@@ -213,6 +215,20 @@ const HELP_BTN = { x: 846, y: 54, w: 44, h: 44 } as const;
 /** `?` 버튼의 탭 영역. 손가락은 마우스보다 크므로 보이는 원보다 넉넉하다. */
 export const HELP_HITS: readonly HitRect[] = [
   { id: 'HELP', x: HELP_BTN.x - 8, y: HELP_BTN.y - 8, w: HELP_BTN.w + 16, h: HELP_BTN.h + 16 },
+];
+
+/**
+ * 구조 지원 칩 두 개 — 하단 밴드 중앙(왼쪽 OVERWRITE 와 오른쪽 ALERTS/DEBT 사이).
+ * 실패가 쌓여야만 그려지지만 히트 영역은 고정이다: 눌렸을 때의 판정은
+ * `toggleHint`/`requestSkip` 이 잠금 조건으로 다시 거른다.
+ */
+const HINT_BTN = { x: 352, y: 566, w: 120, h: 28 } as const;
+const SKIP_BTN = { x: 488, y: 566, w: 120, h: 28 } as const;
+
+/** 힌트/건너뛰기 칩의 탭·클릭 영역. 그리는 상수를 그대로 내보낸다. */
+export const HINT_HITS: readonly HitRect[] = [
+  { id: 'HINT', x: HINT_BTN.x - 6, y: HINT_BTN.y - 8, w: HINT_BTN.w + 12, h: HINT_BTN.h + 14 },
+  { id: 'SKIP', x: SKIP_BTN.x - 6, y: SKIP_BTN.y - 8, w: SKIP_BTN.w + 12, h: SKIP_BTN.h + 14 },
 ];
 
 /** 점이 사각형 안인가. 경계는 포함한다. */
@@ -1145,12 +1161,22 @@ export function drawHud(
   drawWarnStat(ctx, `ALERTS ${s.alerts}`, CANVAS_W - PAD - 132, 'left', s.alerts > 0, C_LOOT);
   drawWarnStat(ctx, `DEBT ${s.debt}`, CANVAS_W - PAD, 'right', s.debt > 0, C_DANGER);
 
+  // ── 하단 중앙: 구조 지원 칩 (실패가 쌓여야 나타난다) ──
+  drawRescueChips(ctx, s);
+
   // ── LISTEN 배지 + 음량 미터 ──
   if (mic !== null) drawMicPanel(ctx, mic);
 
   // ── 주인공의 속말 ──
   // 상태 갱신과 그리기를 여기서 함께 한다. 세션은 읽기만 한다 (whisper.ts 참고).
-  drawWhisper(ctx, updateWhisper(s));
+  // 힌트 배너가 열려 있으면 속말은 쉰다 — 둘 다 안내인데 아래 좌측과 중앙에
+  // 동시에 떠 있으면 어느 쪽도 읽히지 않고, 배너는 플레이어가 직접 청한 쪽이다.
+  const wv = updateWhisper(s);
+  if (!s.hintOpen) drawWhisper(ctx, wv);
+
+  // ── 힌트 배너 + 세션 공지 ──
+  drawHintBanner(ctx, s);
+  drawNotice(ctx, s);
 
   // ── 상황별 키 프롬프트 ──
   // 처음 그 상황이 됐을 때만 해당 키를 띄운다. 눌러 보면 `learnPrompt` 로 지워진다.
@@ -1183,6 +1209,92 @@ function drawWarnStat(
   const lx = align === 'right' ? x - w : x;
   if (hot) hazard(ctx, lx - 2, CANVAS_H - 11, w + 4, 3);
   stencil(ctx, label, x, CANVAS_H - 16, size, hot ? col : C_STENCIL_DIM, align);
+}
+
+// ── 구조 지원: 칩 · 힌트 배너 · 세션 공지 ──────────────────────────────────
+
+/** 구조 지원 칩 한 장. `hot` 이면 지금 반응 중(열림/무장)이라 사선까지 두른다. */
+function rescueChip(
+  ctx: CanvasRenderingContext2D,
+  box: { readonly x: number; readonly y: number; readonly w: number; readonly h: number },
+  label: string,
+  color: string,
+  hot: boolean,
+): void {
+  plate(ctx, box.x, box.y, box.w, box.h);
+  frame(ctx, box.x, box.y, box.w, box.h, color, hot ? 0.9 : 0.55);
+  rivets(ctx, box.x, box.y, box.w, box.h);
+  if (hot) hazard(ctx, box.x + 2, box.y + box.h - 5, box.w - 4, 3, 0.8);
+  stencil(ctx, label, box.x + box.w / 2, box.y + 18, 11, color, 'center');
+}
+
+/**
+ * 실패가 쌓인 플레이어에게만 나타나는 두 칩. 힌트는 HINT_UNLOCK_FAILS 가,
+ * 건너뛰기는 SKIP_UNLOCK_FAILS(STORY 한정)가 연다 — 조건은 세션 함수가 판정한다.
+ */
+function drawRescueChips(ctx: CanvasRenderingContext2D, s: Session): void {
+  if (hintUnlocked(s)) {
+    const label = touchUi
+      ? s.hintOpen
+        ? '힌트 닫기'
+        : '힌트'
+      : s.hintOpen
+        ? 'T ▸ CLOSE'
+        : 'T ▸ HINT';
+    rescueChip(ctx, HINT_BTN, label, C_LOOT, s.hintOpen);
+  }
+  if (skipUnlocked(s)) {
+    const armed = s.skipArm > 0;
+    const label = touchUi
+      ? armed
+        ? '한 번 더!'
+        : '건너뛰기'
+      : armed
+        ? 'N ▸ 확인'
+        : 'N ▸ SKIP';
+    rescueChip(ctx, SKIP_BTN, label, C_DANGER, armed);
+  }
+}
+
+/**
+ * `T` 로 연 결정적 한 줄(`LevelDef.hint`). 하단 밴드 바로 위 중앙 —
+ * 속말 자리를 대신 쓰므로 drawHud 가 이 동안 속말을 쉬게 한다.
+ */
+function drawHintBanner(ctx: CanvasRenderingContext2D, s: Session): void {
+  if (!s.hintOpen) return;
+  const text = s.level.hint;
+  if (text === '') return;
+  const size = 12;
+  ctx.font = font(size, 'bold');
+  const tw = Math.round(ctx.measureText(text).width);
+  const w = tw + 58;
+  const h = 30;
+  const x = Math.round((CANVAS_W - w) / 2);
+  const y = CANVAS_H - BAND_BOT_H - h - 6;
+  plate(ctx, x, y, w, h);
+  frame(ctx, x, y, w, h, C_LOOT, 0.7);
+  rivets(ctx, x, y, w, h);
+  stencil(ctx, 'HINT', x + 10, y + 20, 9, C_STRIPE);
+  stencil(ctx, text, x + 46, y + 20, size, C_STENCIL);
+}
+
+/**
+ * 세션 공지 한 줄 (차단된 R 안내 · 건너뛰기 확인). 위험을 알리는 말이라 붉은
+ * 테두리다. 힌트 배너가 떠 있으면 그 위 칸으로 밀려나 겹치지 않는다.
+ */
+function drawNotice(ctx: CanvasRenderingContext2D, s: Session): void {
+  if (s.notice === null || s.noticeTimer <= 0) return;
+  const a = Math.min(1, s.noticeTimer / 30); // 마지막 0.5초는 페이드로 나간다.
+  const size = 11;
+  ctx.font = font(size, 'bold');
+  const tw = Math.round(ctx.measureText(s.notice).width);
+  const w = tw + 30;
+  const h = 26;
+  const x = Math.round((CANVAS_W - w) / 2);
+  const y = CANVAS_H - BAND_BOT_H - h - 6 - (s.hintOpen ? 38 : 0);
+  plate(ctx, x, y, w, h, 0.96 * a);
+  frame(ctx, x, y, w, h, C_DANGER, 0.85 * a);
+  stencil(ctx, s.notice, x + w / 2, y + 17, size, withAlpha(C_DANGER, a), 'center');
 }
 
 // ── 목표 / 속말 ────────────────────────────────────────────────────────────
@@ -1505,7 +1617,16 @@ function drawTimeGauge(ctx: CanvasRenderingContext2D, s: Session): void {
 
   // 남은 시간은 네 개 핵심 수치 중 하나다 — 계기 옆에 크게, 최대 명도로.
   stencil(ctx, formatTime(left), x - 10, y + h - 1, 13, urgent ? C_DANGER : C_STENCIL, 'right');
-  stencil(ctx, 'R ▸ COMMIT', x + w + 10, y + h - 1, 11, C_STENCIL);
+  // 마지막 몸(잔상 슬롯 소진)에서는 R 이 차단된다 — 라벨이 먼저 그 사실을 말한다.
+  const noSlot = s.ghosts.length >= MAX_AFTERIMAGES && s.overwriteSlot === null;
+  stencil(
+    ctx,
+    noSlot ? 'R ✕ NO SLOT' : 'R ▸ COMMIT',
+    x + w + 10,
+    y + h - 1,
+    11,
+    noSlot ? C_DANGER : C_STENCIL,
+  );
 
   if (s.playMode === 'STORY') {
     stencil(ctx, `LOOP ${s.loopIndex + 1}`, CANVAS_W / 2, y + h + 15, 9, C_STENCIL_DIM, 'center');
