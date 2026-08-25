@@ -163,28 +163,30 @@ function setBackbuffer(w: number, h: number): void {
 }
 
 /**
+ * 화면에 넣을 배율. **비율과 구도는 절대 건드리지 않는다** — 가로세로에 같은 값이
+ * 곱해지고, 남는 여백은 flex 중앙 정렬이 레터박스로 만든다.
+ *
+ * 예전에는 배율 1 이상에서 `Math.floor` 로 **정수배만** 썼다. 픽셀 폭을 고르게
+ * 유지하려던 것인데, 1.5 배가 들어가는 화면에서도 1 배로 남아 화면의 절반이
+ * 빈 채로 있었다 — 1440×900 에서 960×600 은 화면의 44% 다.
+ *
+ * 그래서 정수배 위에 `ZOOM` 만큼 더 키운다. 실제로 들어가는 공간(`raw`)을 넘지
+ * 않으므로 잘리는 일은 없고, 백버퍼를 dpr 배로 키우므로 흐려지지도 않는다.
+ */
+const ZOOM = 1.2;
+
+/**
  * 내부 해상도 960×600 을 화면에 맞춘다.
  *
- * 화면이 960×600 이상이면 **예전 그대로**다: 백버퍼 960×600, 변환 없음, CSS 정수배 확대.
- * 소수배 확대는 pixelated 렌더에서 픽셀 폭이 들쭉날쭉해지므로 데스크톱에서는 쓰지 않는다.
- *
- * 화면이 그보다 작으면(휴대폰 · 작은 창) 정수배가 애초에 존재하지 않는다. 이때는
- * 비율을 지키며 소수배로 축소하고(letterbox 는 flex 중앙 정렬이 만든다), 백버퍼를
- * dpr 배로 키워 선명도를 되찾는다.
+ * 내부 좌표계는 어떤 배율에서도 960×600 이다(`setBackbuffer` 의 변환 하나가
+ * 그걸 보장한다). 그래서 이 함수가 무엇을 하든 게임 로직·판정·구도는 그대로다.
  */
 function fitCanvas(): void {
   const { w: vw, h: vh } = viewportSize();
   const raw = Math.min(vw / CANVAS_W, vh / CANVAS_H);
 
-  if (raw >= 1) {
-    const scale = Math.floor(raw);
-    cv.style.width = `${CANVAS_W * scale}px`;
-    cv.style.height = `${CANVAS_H * scale}px`;
-    setBackbuffer(CANVAS_W, CANVAS_H);
-    return;
-  }
-
-  const scale = Math.max(0.05, raw);
+  // 화면이 내부 해상도보다 크면 정수배 × ZOOM 까지 키우되, 들어가는 만큼만.
+  const scale = raw >= 1 ? Math.min(raw, Math.floor(raw) * ZOOM) : Math.max(0.05, raw);
   const cssW = Math.max(1, Math.floor(CANVAS_W * scale));
   const cssH = Math.max(1, Math.floor(CANVAS_H * scale));
   cv.style.width = `${cssW}px`;
