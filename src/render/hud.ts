@@ -65,6 +65,7 @@ import {
 } from '../game/session';
 import { STAGES } from '../game/levels';
 import { currentObjective, updateWhisper, type WhisperView } from '../game/whisper';
+import * as sprites from './sprites';
 import type { MicView } from '../engine/mic';
 import type { Body } from '../sim/types';
 import { drawKeycap, keycapBox } from './keycap';
@@ -1944,6 +1945,29 @@ let lampGradCtx: CanvasRenderingContext2D | undefined;
 function drawTitleBackdrop(ctx: CanvasRenderingContext2D): void {
   ctx.fillStyle = C_VOID;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // 키 비주얼 — 네 몸이 문을 향해 걸어가고 벽에는 넷씩 묶은 금이 그어져 있다.
+  // 원본이 16:10 이고 캔버스도 960×600(16:10)이라 **비율 왜곡도 잘림도 없다**.
+  // 그림 위에 얹는 글자를 읽히게 하려고 얇은 어둠막을 한 겹 덮되, 인물이 있는
+  // 아래쪽은 건드리지 않는다(위에서 아래로 옅어지는 그라디언트).
+  const key = sprites.scene('titleKey');
+  if (key !== undefined) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(key, 0, 0, CANVAS_W, CANVAS_H);
+    // 위(제목)와 아래(조작법 범례)는 글자가 앉는 자리라 진하게, 가운데 띠는
+    // 인물 넷이 걸어가는 자리라 얕게 덮는다. 이 그림에서 지켜야 할 것은 **네 몸의
+    // 실루엣과 그 밝기 차이**(I 가 가장 밝고 MINE 이 가장 옅다)라, 거기만 살리면
+    // 글자를 읽히게 만드는 나머지는 얼마든지 눌러도 된다.
+    const scrim = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+    scrim.addColorStop(0, withAlpha(C_VOID, 0.74));
+    scrim.addColorStop(0.5, withAlpha(C_VOID, 0.4));
+    scrim.addColorStop(0.72, withAlpha(C_VOID, 0.18));
+    scrim.addColorStop(0.84, withAlpha(C_VOID, 0.55));
+    scrim.addColorStop(1, withAlpha(C_VOID, 0.86));
+    ctx.fillStyle = scrim;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    return;
+  }
 
   const seams = seamData();
   for (let i = 0; i < seams.length; i += 2) {

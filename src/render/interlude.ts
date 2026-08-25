@@ -19,6 +19,7 @@
 import { C_I_RING, C_SLOT, C_TEXT_DIM, font, withAlpha } from './palette';
 import { drawFigure, inkStroke, POSES, type Pose } from './figure';
 import { CANVAS_H, CANVAS_W } from '../sim/constants';
+import * as sprites from './sprites';
 
 // ── 타이밍 ─────────────────────────────────────────────────────────────────
 
@@ -785,15 +786,49 @@ function printedLine(
   g.restore();
 }
 
+/**
+ * 칸의 배경으로 만화 배경 이미지를 깐다. 없으면 false — 호출부가 기존 코드
+ * 배경(그라디언트·콘크리트)을 그대로 쓴다.
+ *
+ * 이미지는 칸을 **cover** 로 덮고 칸 밖으로 넘치는 부분은 잘라 낸다. 늘여서
+ * 맞추면 3:2 원본이 찌그러지므로 비율은 유지한 채 넘치게 두는 쪽을 택했다.
+ *
+ * 배경일 뿐이라는 게 중요하다 — 인물·조명·자막은 그대로 코드가 그 위에 얹는다.
+ * 그래야 해상도가 바뀌거나 문구가 바뀌어도 글자가 이미지에 구워지지 않는다.
+ */
+function sceneBackdrop(g: CanvasRenderingContext2D, r: Rect, id: sprites.SceneId): boolean {
+  const img = sprites.scene(id);
+  if (img === undefined) return false;
+  const iw = 960;
+  const ih = 640;
+  const scale = Math.max(r.w / iw, r.h / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  g.save();
+  g.beginPath();
+  g.rect(r.x, r.y, r.w, r.h);
+  g.clip();
+  g.imageSmoothingEnabled = true;
+  g.drawImage(img, r.x + (r.w - dw) / 2, r.y + (r.h - dh) / 2, dw, dh);
+  // 잉크 작화와 자막이 위에 얹히므로 사진을 한 겹 눌러 둔다 — 안 그러면
+  // 배경 대비가 인물보다 세져서 시선이 뒤로 빠진다.
+  g.fillStyle = 'rgba(6,8,14,0.42)';
+  g.fillRect(r.x, r.y, r.w, r.h);
+  g.restore();
+  return true;
+}
+
 // ── 막간 1 — 문 바깥쪽 ─────────────────────────────────────────────────────
 
 /** 컷 1 — 방금 빠져나온 문을 돌아본다. 바깥쪽에는 손잡이가 달려 있다. */
 function i1cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
-  const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
-  bg.addColorStop(0, '#070a14');
-  bg.addColorStop(1, '#0d1120');
-  g.fillStyle = bg;
-  g.fillRect(r.x, r.y, r.w, r.h);
+  if (!sceneBackdrop(g, r, 'outerDoor')) {
+    const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
+    bg.addColorStop(0, '#070a14');
+    bg.addColorStop(1, '#0d1120');
+    g.fillStyle = bg;
+    g.fillRect(r.x, r.y, r.w, r.h);
+  }
 
   const power = breathe(t, 0.62);
   const fy = r.y + r.h - 42;
@@ -954,11 +989,13 @@ const SHELF_POSES: readonly Pose[] = [
 
 /** 컷 1 — 넓고 낮은 방. 선반이 줄지어 있고 칸마다 멈춘 실루엣이 하나씩. */
 function i2cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
-  const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
-  bg.addColorStop(0, '#0a0e1c');
-  bg.addColorStop(1, '#05070f');
-  g.fillStyle = bg;
-  g.fillRect(r.x, r.y, r.w, r.h);
+  if (!sceneBackdrop(g, r, 'shelfRoom')) {
+    const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
+    bg.addColorStop(0, '#0a0e1c');
+    bg.addColorStop(1, '#05070f');
+    g.fillStyle = bg;
+    g.fillRect(r.x, r.y, r.w, r.h);
+  }
 
   // 천장이 낮다 — 등이 화면 위쪽에 바짝 붙는다.
   lamp(g, r.x + 210, r.y + 12, 96, r.h, 250, breathe(t, 0.4));
@@ -1126,7 +1163,7 @@ function i2cut2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
 /** 컷 1 — 벽의 금 클로즈업. 넷씩 묶인 무더기가 화면 밖까지 이어진다. */
 function i3cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
-  concrete(g, r, 931);
+  if (!sceneBackdrop(g, r, 'wallCrack')) concrete(g, r, 931);
 
   // 네 줄 전부 칸 **밖에서 시작해 밖으로 나간다**. 끝이 보이면 이 컷은 실패다.
   // 한 묶음 폭 = 4획(22px) + 묶음 간격(58px) = 146px. 9묶음이면 1314px 로
@@ -1147,7 +1184,7 @@ function i3cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
 /** 컷 2 — 무더기 아래에 작게 적힌 일련번호. 인쇄체다. 손글씨가 아니다. */
 function i3cut2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
-  concrete(g, r, 934);
+  if (!sceneBackdrop(g, r, 'groupedCore')) concrete(g, r, 934);
 
   // 위 줄은 칸 밖으로 잘려 나가고(무더기는 계속된다), 아래 줄은 끝까지 보인다.
   // 일련번호는 **그 아래 줄 바로 밑**에 붙어야 "무더기 아래에 적혔다"가 된다.
@@ -1179,11 +1216,13 @@ function i3cut2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
 /** 컷 1 — 바깥문 앞. 문 너머는 아직 안 보인다. */
 function i4cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
-  const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
-  bg.addColorStop(0, '#060911');
-  bg.addColorStop(1, '#0c1020');
-  g.fillStyle = bg;
-  g.fillRect(r.x, r.y, r.w, r.h);
+  if (!sceneBackdrop(g, r, 'finalDoor')) {
+    const bg = g.createLinearGradient(0, r.y, 0, r.y + r.h);
+    bg.addColorStop(0, '#060911');
+    bg.addColorStop(1, '#0c1020');
+    g.fillStyle = bg;
+    g.fillRect(r.x, r.y, r.w, r.h);
+  }
 
   const power = breathe(t, 0.5);
   const fy = r.y + r.h - 54;
