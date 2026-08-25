@@ -170,8 +170,8 @@ ASSET: Industrial sliding steel shutter gate, top-down, closing from both
 sides toward the middle. Panels in worn steel #544b40 with 45-degree faded
 hazard stripes #5c4c1c (dirty, chipped), top lip highlight #7e7361, frame
 always visible in #241f1a.
-SHEET: 1 row x 4 columns, each cell exactly 64x32 (a 2-tile-wide doorway at
-2x): frame 1 fully open (only the frame and a faint green #7dffb0 floor tint),
+SHEET: 1 row x 4 columns, each cell exactly 64x64 (displayed as a 32x32 game
+tile after the runtime 0.5x bake): frame 1 fully open (only the frame and a faint green #7dffb0 floor tint),
 frames 2-3 panels sliding in, frame 4 fully shut.
 ```
 
@@ -181,7 +181,7 @@ ASSET: The facility's outer exit door, top-down, 2 states x 2 frames.
 SEALED state: heavy dead-grey steel slab #4a453c, dashed border, faded hazard
 stripes, absolutely no light. OPEN state: the slab is gone — the doorway
 carries a calm device-green #7dffb0 edge glow and a slow flowing dashed
-outline. SHEET: 1 row x 4 columns, 64x32 cells: sealed 1-2 (subtle dust
+outline. SHEET: 1 row x 4 columns, 64x64 cells (displayed as 32x32 in game): sealed 1-2 (subtle dust
 shimmer only), open 1-2 (dash flow offset).
 ```
 

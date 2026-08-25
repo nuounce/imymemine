@@ -70,6 +70,13 @@ describe('스프라이트 — 시트 규격', () => {
       assert.equal(ch % 2, 0, `${id} 셀 세로 ${ch} 가 홀수다`);
     }
   });
+
+  it('게이트와 출구는 게임에서 32×32 셀로 구워진다', () => {
+    for (const id of ['gate', 'exit'] as const) {
+      const { cw, ch } = sheetSpec(id);
+      assert.deepEqual({ w: cw / 2, h: ch / 2 }, { w: 32, h: 32 }, id);
+    }
+  });
 });
 
 // ── 3. 방향 → 행 매핑 ──────────────────────────────────────────────────────
