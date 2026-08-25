@@ -313,11 +313,12 @@ function captionBox(
   corner: 'tl' | 'tr' | 'bl' | 'br',
   t: number,
   seed: number,
+  baseSize = 14,
 ): void {
   const a = clamp01((t - 14) / 20);
   if (a <= 0) return;
 
-  let size = 14;
+  let size = baseSize;
   g.save();
   g.font = font(size, 'bold');
   let tw = g.measureText(text).width;
@@ -831,8 +832,8 @@ function panel1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h * 0.55 }, 4, 0.5, 0.06, '#4d5f96', 0.5);
   screentone(g, r.x, r.y + r.h - 60, r.w, 60, 0.3, '#3c4a78', 0.42);
 
-  captionBox(g, r, '...여기, 우리 집 아닌데.', 'tl', t, 31);
-  narration(g, r, '우리 집 천장엔 야광별 붙어 있었는데. 여긴 그냥 시멘트야.', 'br', t, 32);
+  captionBox(g, r, '...천장이 왜 이래.', 'tl', t, 31);
+  narration(g, r, '우리 집엔, 야광별 있었는데.', 'br', t, 32);
 }
 
 // ── 칸 2 — 벽의 금 (익스트림 클로즈업) ─────────────────────────────────────
@@ -888,8 +889,8 @@ function panel2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   screentone(g, r.x, r.y, r.w, r.h, 0.18, '#8fa4d8', 0.16, 0.6, 5);
 
-  captionBox(g, r, '벽에 줄이 그어져 있어. 넷씩 묶어서.', 'tl', t, 41);
-  narration(g, r, '누가 세고 있었던 거야, 이거.', 'br', t, 42);
+  captionBox(g, r, '하나, 둘... 넷씩이네.', 'tl', t, 41);
+  narration(g, r, '이걸 누가 세고 있었던 거야.', 'br', t, 42);
 }
 
 // ── 칸 3 — 손잡이 없는 문 (미디엄) ─────────────────────────────────────────
@@ -948,7 +949,7 @@ function panel3(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 5, 0.05, 0.42, '#2c3760', 0.6);
 
   captionBox(g, r, '손잡이부터 없애 놨네.', 'bl', t, 51);
-  narration(g, r, '내가 뭘 할 수 있는지 알고 가둔 거야, 이 사람들.', 'tr', t, 52);
+  narration(g, r, '일부러네. 전부.', 'tr', t, 52);
 }
 
 // ── 칸 4 — 발현 (익스트림 클로즈업) ────────────────────────────────────────
@@ -1111,8 +1112,8 @@ function panel4(g: CanvasRenderingContext2D, r: Rect, t: number): void {
     g.restore();
   }
 
-  captionBox(g, r, '손을 뻗었는데,', 'tl', t, 61);
-  narration(g, r, '뭐야. 방금 뭐가 남았는데.', 'bl', t, 62);
+  captionBox(g, r, '어?', 'tl', t, 61);
+  narration(g, r, '방금... 뭐가 남았지.', 'bl', t, 62);
 }
 
 /** 칸 4 의 빛만 **칸 밖으로** 번진다. 클립을 푼 뒤 거터 위에 얹는다. */
@@ -1198,8 +1199,8 @@ function panel5(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 4, 0.06, 0.38, '#2b3660', 0.55);
 
-  captionBox(g, r, '저거 안 사라지네.', 'tl', t, 71);
-  narration(g, r, '조금 전에 내가 한 걸 그대로 하고 있잖아.', 'br', t, 72);
+  captionBox(g, r, '안 사라져.', 'tl', t, 71);
+  narration(g, r, '아까 나잖아, 저거.', 'br', t, 72);
 }
 
 /** standing ↔ reaching 사이를 오가는 루프 포즈. 잔상은 이 한 동작만 되풀이한다. */
@@ -1288,8 +1289,8 @@ function panel6(g: CanvasRenderingContext2D, r: Rect, t: number): void {
 
   toneGradient(g, { x: r.x, y: r.y, w: r.w, h: r.h }, 4, 0.08, 0.34, '#2b3660', 0.5);
 
-  captionBox(g, r, '이 문, 안에서는 안 열리는 거구나.', 'tl', t, 81);
-  narration(g, r, '누가 계속 밟고 있어야 열리는 거네. 근데 몸은 하나잖아.', 'br', t, 82);
+  captionBox(g, r, '밟으면 열리고... 떼면 닫히고.', 'tl', t, 81);
+  narration(g, r, '둘이어야 되는 건데.', 'br', t, 82);
 }
 
 // ── 칸 7 — 넷 (전면) ───────────────────────────────────────────────────────
@@ -1448,13 +1449,23 @@ function panel7(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   toneGradient(g, { x: 0, y: 0, w: CANVAS_W, h: 190 }, 5, 0.4, 0.02, '#3a4874', 0.45);
   toneGradient(g, { x: 0, y: CANVAS_H - 150, w: CANVAS_W, h: 150 }, 5, 0.02, 0.4, '#3a4874', 0.45);
 
+  // 결심과 농담 사이의 한 박 — 두 번째 풍선은 작게, 반 박(26틱) 늦게 (COMIC-SCRIPT 컷 7).
   captionBox(
     g,
     { x: 40, y: 34, w: CANVAS_W - 80, h: 90 },
-    '...그럼 내가 남으면 되지. 넷이나 있잖아, 내가.',
+    '그럼 내가 남으면 되지.',
     'tl',
     t,
     91,
+  );
+  captionBox(
+    g,
+    { x: 96, y: 78, w: CANVAS_W - 136, h: 60 },
+    '나, 넷이나 있잖아.',
+    'tl',
+    t - 26, // 페이드 시작이 26틱 늦어진다 (captionBox 내부가 t-14 기준이므로)
+    92, // seed 를 다르게 — 첫 풍선과 기울기가 겹쳐 보이지 않게
+    11, // 더 작은 글자
   );
 
   // 마지막 24틱: 화면이 밝아지며 타이틀로 넘어간다.

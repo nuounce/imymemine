@@ -238,10 +238,10 @@ describe('엔딩 — 읽기 전용 보증', () => {
       assert.ok(joined.includes(String(debt)), `DEBT ${debt}: 회수량이 안 찍혔다`);
       seen.push(joined);
     }
-    // `수율 양호.` 는 DEBT 3+ 에만 찍힌다.
-    assert.ok(!seen[0]!.includes('수율 양호'), 'DEBT 0 에 도장이 찍혔다');
-    assert.ok(!seen[1]!.includes('수율 양호'), 'DEBT 2 에 도장이 찍혔다');
-    assert.ok(seen[2]!.includes('수율 양호'), 'DEBT 3 에 도장이 없다');
+    // `회수 양호.` 는 DEBT 3+ 에만 찍힌다.
+    assert.ok(!seen[0]!.includes('회수 양호'), 'DEBT 0 에 도장이 찍혔다');
+    assert.ok(!seen[1]!.includes('회수 양호'), 'DEBT 2 에 도장이 찍혔다');
+    assert.ok(seen[2]!.includes('회수 양호'), 'DEBT 3 에 도장이 없다');
   });
 });
 

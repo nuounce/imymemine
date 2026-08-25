@@ -875,10 +875,10 @@ function i1cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   });
 
   toneGradient(g, r, 5, 0.06, 0.4, '#2c3760', 0.58);
-  captionBox(g, r, '...문 바깥쪽엔 손잡이가 있네.', 'tl', t, 1311);
+  captionBox(g, r, '바깥쪽엔, 있네.', 'tl', t, 1311);
 }
 
-/** 컷 2 — 문 옆 벽에 붙은 종이. 손으로 적은 표. 숫자 몇 개와 `수율`. */
+/** 컷 2 — 문 옆 벽에 붙은 종이. 손으로 적은 표. 숫자 몇 개와 `회수`. */
 function i1cut2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   concrete(g, r, 1501);
 
@@ -938,7 +938,7 @@ function i1cut2(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   // 막간 3 의 일련번호(`printedLine`) 와 정확히 반대편에 있는 부품이다.
   const cells: [string, number, number, number][] = [
     ['배치', -92, -ph / 2 + 24, 1541],
-    ['수율', 92, -ph / 2 + 24, 1542],
+    ['회수', 92, -ph / 2 + 24, 1542],
     ['04', -92, -ph / 2 + 58, 1543],
     ['3', 92, -ph / 2 + 58, 1544],
     ['05', -92, -ph / 2 + 92, 1545],
@@ -1179,7 +1179,7 @@ function i3cut1(g: CanvasRenderingContext2D, r: Rect, t: number): void {
   }
 
   screentone(g, r.x, r.y, r.w, r.h, 0.18, '#8fa4d8', 0.16, 0.6, 5);
-  captionBox(g, r, '넷씩 묶은 게... 이게 몇 무더기야.', 'tl', t, 3101);
+  captionBox(g, r, '넷씩... 이게 대체 몇이야.', 'tl', t, 3101);
 }
 
 /** 컷 2 — 무더기 아래에 작게 적힌 일련번호. 인쇄체다. 손글씨가 아니다. */

@@ -296,7 +296,7 @@ const PROMPT_COPY: Readonly<Record<PromptId, PromptCopy>> = {
   MOVE: { key: 'WASD', touchKey: '스틱', line: '움직여 본다', color: C_STENCIL },
   INTERACT: { key: 'E', touchKey: 'E', line: '만져 본다', color: C_ON },
   COMMIT: { key: 'R', touchKey: 'COMMIT', line: '여기 나를 남긴다', color: C_LOOT, big: true },
-  OVERWRITE: { key: 'Q', touchKey: 'Q', line: '잔상 하나를 다시 녹화', color: C_LOOT },
+  OVERWRITE: { key: 'Q', touchKey: 'Q', line: '잔상 하나를 다시 남긴다', color: C_LOOT },
   RUN: { key: 'SHIFT', touchKey: '링 밖', line: '뛰면 소리가 난다', color: C_DANGER },
   TIMEUP: { key: '', touchKey: '', line: '곧 강제로 잔상이 된다', color: C_DANGER },
 };
@@ -2836,7 +2836,7 @@ function drawRunResult(ctx: CanvasRenderingContext2D, r: RunResult): void {
     stencil(ctx, 'NEW BEST ★', CANVAS_W / 2, py + 184, 14, C_LOOT, 'center');
     if (!r.saved) {
       // 저장이 막힌 환경(프라이빗 모드 등)이라는 사실을 숨기지 않는다.
-      text(ctx, '기록을 저장하지 못했어 — 브라우저 저장소가 막혀 있어.', CANVAS_W / 2, py + 204, 9, C_TEXT_DIM, 'center');
+      text(ctx, '기록 저장 실패 — 브라우저 저장소가 차단됨.', CANVAS_W / 2, py + 204, 9, C_TEXT_DIM, 'center');
     }
   } else if (r.previousBest !== null) {
     stencil(
@@ -3117,7 +3117,7 @@ export function drawEnding(
   // ── 마지막 한 줄 ── 이 엔딩에만 있다. 감정이 없어서 더 아프다.
   if (yielded && clock >= END_STAMP_AT) {
     const a = Math.min(1, (clock - END_STAMP_AT) / 30);
-    printLine(ctx, '수율 양호.', CANVAS_W / 2, 500, 20, withAlpha(C_LAMP, a));
+    printLine(ctx, '회수 양호.', CANVAS_W / 2, 500, 20, withAlpha(C_LAMP, a));
   }
 
   stencil(
