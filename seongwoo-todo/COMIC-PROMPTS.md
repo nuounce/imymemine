@@ -320,7 +320,17 @@ the left, THREE translucent paler copies of the same figure, each frozen in a
 different earlier pose (reaching, crouching, standing on a floor plate), each
 fainter with distance — the only self-luminous things in the image. Around
 them, darkness, pipes, a sealed steel door with NO handle far right. On the
-wall behind, faint tally marks grouped in fours.
+wall behind, faint tally marks grouped in fours — vertical strokes only, no
+diagonal strokes.
+FOREGROUND (bottom band, used-up traces of previous loops — the floor tells
+the story): scattered close to the camera, slightly dark and soft so they
+never compete with the title — a SPENT flashbang canister lying on its side
+with a wisp of smoke, its pin ring nearby; a floor pressure plate worn shiny
+in the middle from being stood on; a wall-mounted push button, its round cap
+faintly GLOWING pale (still switched on — someone pressed it and never came
+back). Keep them monochrome like everything else; the glow is pale ink, not
+color. These props sit in the lower quarter but must not touch or overlap
+the title or tagline text.
 TEXT (render EXACTLY, the only text in the image):
 - Title, large, upper-left, clean white stencil capitals: "I.MY.ME.MINE"
 - One line beneath it, much smaller, plain white type: "Fail now. Escape later."
