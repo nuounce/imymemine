@@ -288,6 +288,27 @@ function transitionCopy(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): s
 }
 
 /**
+ * 첫 스테이지에서 **시간만 흘려보낸 루프**는 몸을 먹지 않는다.
+ *
+ * 이 게임의 첫 아하는 "발판을 밟은 채로 나를 남긴다"인데, 거기 닿기 전에는
+ * 방을 뒤져 보는 것 말고 할 수 있는 일이 없다. 그런데 60초가 지나면 그 탐색이
+ * 자동으로 몸 하나를 태워서, **찾아보는 행위 자체가 처벌**이 됐다. 세 명이
+ * 독립적으로 첫 방에서 몸을 다 쓰고 초기화까지 갔다.
+ *
+ * 그래서 첫 방에서만, 그리고 **스스로 R 을 누른 게 아닐 때만** 되돌린다.
+ * 확정(MANUAL)은 플레이어의 결정이므로 언제나 그대로 값을 치른다 — 규칙을
+ * 무르는 게 아니라, 규칙을 배우기 전까지의 유예다.
+ *
+ * **남길 자리가 다 찼으면 유예도 끝난다.** 몸을 셋 다 세워 두고도 시간이
+ * 넘어가는 것은 더 이상 탐색이 아니라 실패한 배치이고, 여기서까지 되돌리면
+ * LOOP FAILED 로 가는 길이 막혀 자동 초기화도 못 받은 채 같은 방을 영원히
+ * 맴돌게 된다 (SPEC §1.1).
+ */
+function isFreeExploration(s: Session, reason: 'MANUAL' | 'CAPTURED' | 'TIMEUP'): boolean {
+  return s.stageIndex === 0 && reason === 'TIMEUP' && s.ghosts.length < MAX_AFTERIMAGES;
+}
+
+/**
  * 지금 녹화 중인 런을 잔상으로 확정한다. @returns 실제로 확정됐는가.
  *
  * 잔상 슬롯이 가득 찬 마지막 몸(MINE)에서는 사유에 따라 갈린다 (SPEC §1.1):
@@ -313,8 +334,30 @@ export function commitLoop(
   // 동결 상태로 시작하고, 1/2/3 이 스테이지당 1회뿐인 덮어쓰기를 오소모한다.
   // 확정은 사유가 무엇이든 선택 메뉴를 닫는다.
   s.awaitingOverwritePick = false;
+
+  if (isFreeExploration(s, reason)) {
+    // 몸도 슬롯도 건드리지 않고 방만 처음으로 되감는다.
+    //
+    // 다만 **실패 횟수는 센다.** 여기서 계속 막히는 사람이야말로 5회 힌트와
+    // 10회 건너뛰기가 필요한 사람이라, 몸을 지켜 준다고 구조 신호까지 끊으면
+    // 첫 방에 갇힌 사람만 안전장치 밖에 남는다.
+    s.failCount++;
+    s.overwriteSlot = null;
+    // 전환 오버레이는 전부 영문 대문자로 통일돼 있다. 여기만 한국어를 섞으면
+    // 이 화면이 "시스템 메시지"가 아니라 튜토리얼 안내판으로 읽힌다.
+    s.transitionMsg = [
+      'TIME IS UP.',
+      'NOTHING LEFT BEHIND — NOT YET.',
+      `LOOP 1 — YOU ARE STILL "${SLOT_NAMES[0] ?? 'I'}"`,
+    ];
+    s.phase = 'TRANSITION';
+    s.transitionTimer = LOOP_TRANSITION_TICKS;
+    return true;
+  }
+
   // 몸을 잃는 확정만 실패로 센다. R 조기 확정은 전략적 배치다.
   const failed = reason !== 'MANUAL';
+
   const tape = Uint16Array.from(s.recording);
   const corpse = reason === 'CAPTURED';
 

@@ -315,8 +315,10 @@ interface Runtime {
   /** 자리가 나기를 기다리는 대사. 시한이 지나면 버려진다. */
   pending: { text: string; expire: number }[];
   hintLevel: number;
-  /** 이 스테이지에서 한 번이라도 본 진전 서명. */
+  /** 이 스테이지에서 한 번이라도 밟아 본 타일. 루프를 넘어 남는다. */
   seen: Set<string>;
+  /** 마지막으로 본 진전 서명. 이게 바뀌면 막힘 카운터가 풀린다. */
+  progressSig: string;
   stall: number;
   plateFrames: number;
   prevX: number;
@@ -334,6 +336,7 @@ function freshRuntime(key: string, elapsed: number): Runtime {
     pending: [],
     hintLevel: 0,
     seen: new Set<string>(),
+    progressSig: '',
     stall: 0,
     plateFrames: 0,
     prevX: 0,
@@ -373,19 +376,27 @@ function onPlate(sim: SimState, b: Body): boolean {
 }
 
 /**
- * 진전 서명 — "이 상황은 아까와 같은 상황인가"의 요약.
+ * 진전 서명 — "퍼즐이 아까보다 앞으로 갔는가"의 요약.
  *
- * 잔상 수 · 코어 소유 · 켜져 있는 채널 집합 · 조작 몸의 **타일** 좌표.
- * 퍼즐이 앞으로 나아갔다면 이 넷 중 하나는 반드시 바뀐다.
+ * 잔상 수 · 코어 소유 · 켜져 있는 채널 집합. **자리(타일)는 여기 없다.**
+ *
+ * 예전에는 조작 몸의 타일 좌표가 이 서명에 들어 있었다. 그래서 방을 돌아다니며
+ * 새 타일을 밟을 때마다 막힘 카운터가 0 으로 돌아갔고, 정작 **헤매는 사람이
+ * 곧 계속 움직이는 사람**이라 힌트가 그 사람에게만 영영 오지 않았다.
+ * 돌아다니는 것은 진전이 아니다 — 진전은 세계가 바뀌는 것이다.
  */
-function signatureOf(s: Session, live: Body | null): string {
+function progressSigOf(s: Session): string {
   const sim = s.sim;
   const chans: string[] = [];
   for (const [name, on] of sim.channels) if (on) chans.push(name);
   chans.sort();
-  const tx = live === null ? -1 : Math.floor(live.x / TILE_SUB);
-  const ty = live === null ? -1 : Math.floor(live.y / TILE_SUB);
-  return `${s.ghosts.length}|${sim.loot.taken ? 1 : 0}|${sim.loot.holderId}|${chans.join(',')}|${tx},${ty}`;
+  return `${s.ghosts.length}|${sim.loot.taken ? 1 : 0}|${sim.loot.holderId}|${chans.join(',')}`;
+}
+
+/** 지금 서 있는 타일. 탐색이 끝났는지(=가본 데만 맴도는지) 보는 데만 쓴다. */
+function tileOf(live: Body | null): string {
+  if (live === null) return '-';
+  return `${Math.floor(live.x / TILE_SUB)},${Math.floor(live.y / TILE_SUB)}`;
 }
 
 // ── 대사 선택 ──────────────────────────────────────────────────────────────
@@ -524,15 +535,28 @@ function bumpedClosedGate(sim: SimState, live: Body): boolean {
 /**
  * 스테이지가 바뀌었거나 초기화됐는지 본다.
  *
- * `startStage` 는 `elapsedTicks` 를 0 으로 되돌리므로 시간이 **뒤로 간 것**이
- * 곧 초기화의 서명이다. `fullReset` 은 `debt` 도 올리므로 같은 스테이지를
- * 그대로 다시 시작해도 키가 달라진다.
+ * **다른 스테이지로 넘어갈 때만** 기억을 통째로 버린다. 같은 스테이지를 전체
+ * 초기화(`fullReset`)로 다시 시작하는 것은 "새 방"이 아니라 **여기서 또 막혔다**
+ * 는 뜻이므로, 힌트 단계와 이미 뱉은 대사는 그대로 안고 간다. 예전에는 키에
+ * `debt` 가 섞여 있어서 초기화할 때마다 힌트가 1단계부터 다시 시작했고,
+ * 가장 도움이 필요한 사람이 오히려 도움을 잃었다.
+ *
+ * `startStage` 가 `elapsedTicks` 를 0 으로 되돌리므로 시간이 **뒤로 간 것**이
+ * 곧 초기화의 서명이다. 이때는 화면에 떠 있던 말만 걷어낸다.
  */
 function syncStage(s: Session): void {
-  const key = `${s.level.id}#${s.stageIndex}#${s.debt}`;
-  if (rt.key !== key || s.elapsedTicks < rt.lastElapsed) {
+  const key = `${s.level.id}#${s.stageIndex}`;
+  if (rt.key !== key) {
     rt = freshRuntime(key, s.elapsedTicks);
     return;
+  }
+  if (s.elapsedTicks < rt.lastElapsed) {
+    // 같은 방을 다시 시작 — 지금 떠 있는 말과 대기열만 비운다.
+    rt.text = null;
+    rt.timer = 0;
+    rt.pending = [];
+    rt.plateFrames = 0;
+    rt.hasPrev = false;
   }
   rt.lastElapsed = s.elapsedTicks;
 }
@@ -549,19 +573,30 @@ function advance(s: Session): void {
   if (live !== null && onPlate(s.sim, live)) rt.plateFrames++;
   else rt.plateFrames = 0;
 
-  // 막힘 감지: 처음 보는 서명이면 진전, 이미 본 서명이면 제자리걸음.
-  const sig = signatureOf(s, live);
-  if (rt.seen.has(sig)) {
-    rt.stall++;
-    const stage = STAGE_WHISPERS[s.level.id];
-    const max = stage === undefined ? 0 : stage.steps.length;
-    if (rt.stall >= STALL_FRAMES && rt.hintLevel < max) {
-      rt.hintLevel++;
-      rt.stall = 0;
-    }
-  } else {
-    rt.seen.add(sig);
+  // 막힘 감지 — 세 상태를 구분한다.
+  //   진전(세계가 바뀜)   : 카운터를 0 으로 되돌린다. 힌트는 필요 없다.
+  //   탐색(처음 밟는 타일): 카운터를 **유지**한다. 아직 스스로 찾는 중이다.
+  //   맴돎(가본 자리뿐)   : 카운터를 올린다. 이 사람은 지금 막혀 있다.
+  //
+  // 가본 타일 기록(`seen`)은 루프를 넘어 남는다. 그래서 첫 루프는 온전히
+  // 탐색에 쓰이고, 같은 방을 두 번째로 도는 사람에게는 힌트가 빨리 붙는다.
+  const psig = progressSigOf(s);
+  if (psig !== rt.progressSig) {
+    rt.progressSig = psig;
     rt.stall = 0;
+  } else {
+    const tile = tileOf(live);
+    if (rt.seen.has(tile)) {
+      rt.stall++;
+      const stage = STAGE_WHISPERS[s.level.id];
+      const max = stage === undefined ? 0 : stage.steps.length;
+      if (rt.stall >= STALL_FRAMES && rt.hintLevel < max) {
+        rt.hintLevel++;
+        rt.stall = 0;
+      }
+    } else {
+      rt.seen.add(tile);
+    }
   }
 
   if (rt.timer > 0) rt.timer--;

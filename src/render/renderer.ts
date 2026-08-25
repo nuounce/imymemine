@@ -63,6 +63,7 @@ import {
   C_FLOOR_PALE,
   C_GRIME,
   C_GUARD,
+  C_FLOOR_MARK,
   C_HAZARD,
   C_I_CORE,
   C_I_RING,
@@ -1556,6 +1557,50 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     ctx.fillRect(x, y + h - 1, w, 1);
     ctx.fillRect(x + w - 1, y, 1, h);
 
+    // 미끄럼 방지 홈 — **밟기 전에도 "밟는 것"으로 보여야 한다.**
+    //
+    // 이게 없을 때 처음 온 사람은 판 가운데 찍힌 채널 스텐실만 보고 이 판을
+    // **방 이름표**로 읽었다. 실제로 게이트(`SEALED`)도 테두리 + 가운데 대문자
+    // 라벨이라, 둘이 같은 종류의 표지판으로 보인 것이다. 밟을 생각을 아예 못
+    // 하니 게임의 첫 아하까지 도달하지 못한다.
+    //
+    // 그래서 질감으로 갈랐다 — **게이트는 비스듬한 위험 도색, 발판은 수평 홈**.
+    // 발로 딛는 철판의 미끄럼 방지 홈은 현실에서도 "여기를 밟는다"는 뜻이다.
+    // 램프가 아니라 깎인 홈이라 "하우징은 강철, 램프만 빛난다" 규칙도 지킨다.
+    {
+      const step = 5;
+      const inset = 4;
+      // 채널 각인이 앉을 자리는 홈을 비운다 — 글자 위로 홈이 지나가면 둘 다 못 읽는다.
+      const bandTop = y + h / 2 - 6;
+      const bandBot = y + h / 2 + 4.5;
+      for (let gy = y + inset + 2; gy < y + h - inset; gy += step) {
+        if (gy > bandTop && gy < bandBot) continue;
+        ctx.fillStyle = withAlpha(C_METAL_DARK, 0.55);
+        ctx.fillRect(x + inset, gy, w - inset * 2, 1);
+        ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), p.on ? 0.3 : 0.55);
+        ctx.fillRect(x + inset, gy + 1, w - inset * 2, 1);
+      }
+    }
+
+    // 딛는 자리 표시 — 판 위쪽 가운데를 향해 꺾인 갈매기. 바닥 도색이라
+    // 꺼져 있을 때 더 진하고, 켜지면 초록 램프에 자리를 넘긴다.
+    {
+      const cx = x + w / 2;
+      const top = y + 4.5;
+      const arm = Math.min(6, w * 0.22);
+      // 안전 도색은 **어두운 구석에서도 읽혀야** 한다. 방 조도(k)를 그대로 곱하면
+      // 등에서 먼 발판이 배경에 묻히는데, 스테이지 1 의 발판이 정확히 그 자리다.
+      // 그래서 감쇠에 바닥을 깔아 준다 — 현실의 축광 도색과 같은 이유다.
+      ctx.strokeStyle = withAlpha(mulHex(C_FLOOR_MARK, Math.max(k, 0.78)), p.on ? 0.35 : 0.95);
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'miter';
+      ctx.beginPath();
+      ctx.moveTo(cx - arm, top);
+      ctx.lineTo(cx, top + arm * 0.75);
+      ctx.lineTo(cx + arm, top);
+      ctx.stroke();
+    }
+
     // 상태 램프 — 테두리 안쪽 한 줄. ON 이면 초록이 확실히 살아난다.
     // OFF 는 채널 색(C_OFF, 남색)이 아니라 **깎인 금속 홈**이다 — 남색 선은 콘크리트
     // 위에서 유일하게 남은 "사이버" 잔재이고, 어두운 방에서는 아예 안 보인다.
@@ -1567,9 +1612,11 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
       ctx.lineWidth = 6;
       ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
     }
-    // 채널 라벨 — 어느 발판이 어느 문을 여는지 즉시 읽혀야 한다. 강철에 찍은 스텐실이다.
-    ctx.fillStyle = p.on ? withAlpha(col, 0.9) : withAlpha(C_METAL_LIP, 0.85);
-    ctx.font = font(8, 'bold');
+    // 채널 라벨 — 어느 발판이 어느 문을 여는지는 여전히 읽혀야 하지만, **표지판의
+    // 제목처럼 굵게 가운데 박히면 판 전체가 이름표로 읽힌다**. 그래서 아래쪽으로
+    // 내려 각인처럼 눕힌다. 홈과 갈매기가 먼저 보이고, 채널은 그 다음에 읽힌다.
+    ctx.fillStyle = p.on ? withAlpha(col, 0.9) : withAlpha(C_METAL_LIP, 0.72);
+    ctx.font = font(7);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(p.channel.toUpperCase(), x + w / 2, y + h / 2);

@@ -17,6 +17,7 @@ import { STAGES } from '../src/game/levels';
 import {
   commitLoop,
   createSession,
+  fullReset,
   startStage,
   tickSession,
   type Session,
@@ -29,7 +30,7 @@ import {
   updateWhisper,
   whisperDebug,
 } from '../src/game/whisper';
-import { IN_DOWN, IN_LEFT, IN_RIGHT, LOOP_TRANSITION_TICKS } from '../src/sim/constants';
+import { IN_DOWN, IN_LEFT, IN_RIGHT, IN_UP, LOOP_TRANSITION_TICKS } from '../src/sim/constants';
 import { hashState } from '../src/sim/hash';
 
 /** 세션을 프레임 단위로 굴리며 속말도 같이 갱신한다 (실제 drawHud 경로와 동일). */
@@ -133,6 +134,56 @@ describe('whisper — 막힘 감지', () => {
     const max = STAGE_WHISPERS[STAGES[0]!.id]!.steps.length;
     drive(s, STALL_FRAMES * (max + 3));
     assert.equal(whisperDebug().hintLevel, max);
+  });
+
+  // 이 검사가 이 파일에서 가장 중요하다. 예전에는 진전 서명에 조작 몸의 타일
+  // 좌표가 들어 있어서, 방을 **돌아다니기만 해도** 막힘 카운터가 매번 0 으로
+  // 돌아갔다. 그래서 정작 헤매는 사람(=계속 움직이는 사람)에게는 힌트가 영영
+  // 오지 않았다. 실측으로 5분을 헤매도 1단계에서 멈췄다.
+  it('방을 헤매고 다니는 사람에게도 힌트가 끝까지 올라간다', () => {
+    const s = freshSession(0);
+    const max = STAGE_WHISPERS[STAGES[0]!.id]!.steps.length;
+
+    // 20~60 프레임마다 방향을 바꾸며 방을 도는, 전형적인 탐색 행동.
+    let seed = 12345;
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    const dirs = [IN_UP, IN_DOWN, IN_LEFT, IN_RIGHT];
+    let dir = dirs[0]!;
+    let hold = 0;
+    for (let f = 0; f < 60 * 90; f++) {
+      if (hold <= 0) {
+        dir = dirs[Math.floor(rnd() * 4)]!;
+        hold = 20 + Math.floor(rnd() * 40);
+      }
+      hold--;
+      drive(s, 1, dir);
+    }
+
+    assert.equal(
+      whisperDebug().hintLevel,
+      max,
+      '헤매는 동안 힌트가 끝까지 올라가지 않았다 — 정답 단계가 영영 안 나온다',
+    );
+  });
+
+  // 같은 방에서 또 막혀 초기화한 사람은 도움이 **더** 필요하다. 예전에는
+  // 막힘 키에 debt 가 섞여 있어서 초기화할 때마다 힌트가 1단계로 되감겼다.
+  it('전체 초기화로 같은 스테이지를 다시 시작해도 힌트 단계가 남는다', () => {
+    const s = freshSession(0);
+    drive(s, STALL_FRAMES * 2 + 60);
+    const before = whisperDebug().hintLevel;
+    assert.ok(before >= 2, `초기화 전 힌트 단계가 ${before} 뿐이다`);
+
+    fullReset(s);
+    drive(s, 60);
+    assert.equal(
+      whisperDebug().hintLevel,
+      before,
+      '초기화했더니 힌트가 처음으로 되감겼다 — 가장 막힌 사람이 도움을 잃는다',
+    );
   });
 });
 

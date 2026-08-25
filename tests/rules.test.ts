@@ -439,9 +439,10 @@ describe('§2 승리는 조작 중인 몸(I)만 만든다', () => {
 // ── 7. 시간초과 자동 확정 (SPEC §2) ───────────────────────────────────────
 
 describe('§2 3600틱을 소진하면 TIMEUP 으로 자동 잔상화된다', () => {
+  // 튜토리얼(첫 스테이지)만 예외라, 규칙 자체는 두 번째 방에서 증명한다.
   it('MAX_TICKS 도달 → outcome TIMEUP → 세션이 스스로 확정한다', () => {
     const s = createSession();
-    startStage(s, 0);
+    startStage(s, 1);
     for (let i = 0; i < MAX_TICKS; i++) tickSession(s, 0);
 
     assert.equal(s.sim.outcome, 'TIMEUP');
@@ -451,6 +452,31 @@ describe('§2 3600틱을 소진하면 TIMEUP 으로 자동 잔상화된다', () 
     assert.equal(s.ghosts[0]!.corpse, false, '시간초과는 시체가 아니다');
     assert.equal(s.transitionMsg[0], 'TIME IS UP.');
     assert.equal(s.debt, 0, '시간초과가 DEBT 를 매겼다');
+  });
+
+  // 첫 방의 유예. 규칙을 배우기 전까지는 "찾아보는 것"이 몸을 먹지 않는다 —
+  // 이게 없을 때 처음 온 사람 셋이 전부 첫 방에서 몸을 다 쓰고 초기화까지 갔다.
+  it('첫 스테이지의 시간초과만은 잔상을 먹지 않는다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    for (let i = 0; i < MAX_TICKS; i++) tickSession(s, 0);
+
+    assert.equal(s.sim.outcome, 'TIMEUP');
+    assert.equal(s.phase, 'TRANSITION');
+    assert.equal(s.ghosts.length, 0, '첫 방에서 헤맨 것만으로 몸을 잃었다');
+    assert.equal(s.debt, 0);
+    assert.equal(s.transitionMsg[0], 'TIME IS UP.');
+  });
+
+  // 유예는 시간초과에만 걸린다. 스스로 R 을 누른 것은 언제나 결정이다.
+  it('첫 스테이지라도 직접 확정(R)하면 잔상이 남는다', () => {
+    const s = createSession();
+    startStage(s, 0);
+    for (let i = 0; i < 60; i++) tickSession(s, 0);
+    commitLoop(s, 'MANUAL');
+
+    assert.equal(s.ghosts.length, 1, '직접 확정했는데 잔상이 남지 않았다');
+    assert.equal(s.transitionMsg[0], 'COMMITTED.');
   });
 });
 
