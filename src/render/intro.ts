@@ -25,6 +25,7 @@ import {
   withAlpha,
 } from './palette';
 import { drawFigure, figureAnchor, inkStroke, POSES, type Pose } from './figure';
+import * as sprites from './sprites';
 import { CANVAS_H, CANVAS_W } from '../sim/constants';
 
 // ── 타이밍 ─────────────────────────────────────────────────────────────────
@@ -1489,6 +1490,25 @@ const PAINT: ReadonlyArray<(g: CanvasRenderingContext2D, r: Rect, t: number) => 
 ];
 
 /** 페이지 한 장. `tick` 시점까지 그려진 칸만 얹는다. */
+/** 페이지 index → 만화 정본 이미지. 없으면 코드 드로잉으로 떨어진다. */
+const PAGE_SCENE = ['introPage1', 'introPage2', 'introPage3'] as const;
+
+/**
+ * 만화 정본 페이지를 **칸 하나만큼** 잘라 그린다.
+ *
+ * 페이지 이미지는 960×600 통짜라 그냥 깔면 아직 안 나온 칸까지 한꺼번에 보인다.
+ * 칸 사각형으로 잘라 내면 **칸별 공개와 잉크 와이프 연출이 그대로 살아난다** —
+ * 이미지를 쓰면서도 "한 칸씩 드러난다"는 이 인트로의 문법을 잃지 않는다.
+ *
+ * 좌표계가 같아서(둘 다 960×600) 잘라 낼 자리와 놓을 자리가 정확히 일치한다.
+ */
+function panelImage(g: CanvasRenderingContext2D, page: number, r: Rect): boolean {
+  const img = sprites.scene(PAGE_SCENE[page] ?? 'introPage1');
+  if (img === undefined) return false;
+  g.drawImage(img, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+  return true;
+}
+
 function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void {
   g.fillStyle = C_PAPER;
   g.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -1506,7 +1526,9 @@ function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void
     g.beginPath();
     g.rect(r.x, r.y, r.w, r.h);
     g.clip();
-    PAINT[i]!(g, r, local);
+    // 만화 정본이 있으면 그것을, 없으면 예전 코드 드로잉을 쓴다.
+    const usedImage = panelImage(g, page, r);
+    if (!usedImage) PAINT[i]!(g, r, local);
     inkWipe(g, r, p, 700 + i);
     g.restore();
 
@@ -1514,7 +1536,8 @@ function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void
     if (i === 3 && p > 0.55) panel4Spill(g, r, local);
 
     // 칸 7 은 전면(full-bleed) 이라 테두리를 두르지 않는다.
-    if (i !== 6) panelBorder(g, r, 100 + i, clamp01((p - 0.12) / 0.35));
+    // 만화 정본에는 손으로 그은 테두리가 이미 있으므로 그때도 덧그리지 않는다.
+    if (i !== 6 && !usedImage) panelBorder(g, r, 100 + i, clamp01((p - 0.12) / 0.35));
   }
 }
 

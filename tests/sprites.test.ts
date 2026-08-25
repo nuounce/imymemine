@@ -38,14 +38,20 @@ describe('스프라이트 — 에셋 경로', () => {
     assert.deepEqual(missing, [], `없는 에셋:\n  ${missing.join('\n  ')}`);
   });
 
-  it('런타임은 최종 폴더(a/b/c-group)만 참조한다', () => {
-    // source/·comic/·process_*.py 는 작업 원본이라 게임에 실려서는 안 된다.
+  it('런타임은 납품 폴더만 참조한다 — 작업 원본은 실리지 않는다', () => {
+    // 게임에 실려도 되는 곳은 세 군데뿐이다.
+    //   a/b-group      스프라이트 시트 (원본 그대로 쓴다)
+    //   c-group/delivery      만화 배경·타이틀 납품본
+    //   comic+comment/delivery  만화 정본 페이지 납품본
+    // `source/` 와 납품본이 아닌 `comic+comment/` 원본은 장당 1MB 가 넘어
+    // 첫 진입을 느리게 만든다 — 실수로 참조하면 여기서 걸린다.
     for (const { id, url } of assetUrls()) {
-      assert.ok(
-        /\/(a-group|b-group|c-group)\//.test(url),
-        `${id} 가 최종 폴더 밖을 가리킨다: ${url}`,
-      );
-      assert.ok(!/\/source\/|\/comic/.test(url), `${id} 가 작업 원본을 가리킨다: ${url}`);
+      const ok =
+        /\/(a-group|b-group)\//.test(url) ||
+        /\/c-group\/delivery\//.test(url) ||
+        /\/comic\+comment\/delivery\//.test(url);
+      assert.ok(ok, `${id} 가 납품 폴더 밖을 가리킨다: ${url}`);
+      assert.ok(!/\/source\//.test(url), `${id} 가 작업 원본을 가리킨다: ${url}`);
     }
   });
 });

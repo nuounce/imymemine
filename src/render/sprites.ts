@@ -73,7 +73,15 @@ export type SceneId =
   | 'wallCrack'
   | 'groupedCore'
   | 'finalDoor'
-  | 'titleKey';
+  | 'titleKey'
+  // ── 만화 정본 페이지 (글자가 이미지에 구워져 있다) ──
+  | 'introPage1'
+  | 'introPage2'
+  | 'introPage3'
+  | 'interlude1'
+  | 'interlude2'
+  | 'interlude3'
+  | 'interlude4';
 
 /**
  * 에셋 URL.
@@ -112,6 +120,17 @@ const C1_03 = new URL('../../seongwoo-todo/assets/generated/c-group/delivery/C1-
 const C1_04 = new URL('../../seongwoo-todo/assets/generated/c-group/delivery/C1-04-grouped-core.png', import.meta.url).href;
 const C1_05 = new URL('../../seongwoo-todo/assets/generated/c-group/delivery/C1-05-final-door.png', import.meta.url).href;
 const C2 = new URL('../../seongwoo-todo/assets/generated/c-group/delivery/C2-title-key-visual.png', import.meta.url).href;
+
+// 만화 정본 페이지. 원본(comic+comment/)은 장당 1MB 라, c-group 과 같은 방식으로
+// 그레이스케일 납품본을 쓴다 (`scripts/derive-comic.sh`). 크기는 이미 960×600 이라
+// 줄이지 않았고 재인코딩만 했다.
+const CM1 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/INTRO-PAGE-1.png', import.meta.url).href;
+const CM2 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/INTRO-PAGE-2.png', import.meta.url).href;
+const CM3 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/INTRO-PAGE-3.png', import.meta.url).href;
+const CI1 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/M1-PAGE.png', import.meta.url).href;
+const CI2 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/M2-PAGE.png', import.meta.url).href;
+const CI3 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/M3-PAGE.png', import.meta.url).href;
+const CI4 = new URL('../../seongwoo-todo/assets/generated/comic+comment/delivery/M4-PAGE.png', import.meta.url).href;
 
 /**
  * 시트 규격표. 숫자는 전부 `seongwoo-todo/assets/generated/README.md` 와
@@ -161,6 +180,13 @@ const SCENES: Readonly<Record<SceneId, string>> = {
   groupedCore: C1_04,
   finalDoor: C1_05,
   titleKey: C2,
+  introPage1: CM1,
+  introPage2: CM2,
+  introPage3: CM3,
+  interlude1: CI1,
+  interlude2: CI2,
+  interlude3: CI3,
+  interlude4: CI4,
 };
 
 /**

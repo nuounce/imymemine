@@ -1391,6 +1391,33 @@ function drawOverlay(g: CanvasRenderingContext2D, tick: number, touch: boolean):
  * 페이지 넘김이 없다 — 두 칸이 한 장 위에서 차례로 잉크로 번진다.
  * `s.id` 가 범위를 벗어나면 아무것도 그리지 않는다(검은 화면이 크래시보다 낫다).
  */
+/** 막간 id → 만화 정본 페이지. */
+const INTERLUDE_SCENE = ['interlude1', 'interlude2', 'interlude3', 'interlude4'] as const;
+
+/**
+ * 만화 정본 막간 페이지를 **칸 하나만큼** 잘라 그린다.
+ * 좌표계가 캔버스와 같아(960×600) 잘라 낼 자리와 놓을 자리가 정확히 일치한다.
+ *
+ * 다만 **잘라 낼 자리는 코드 드로잉의 칸 사각형과 다르다.** 코드 쪽 칸은 컷마다
+ * 크기와 들여쓰기가 제각각인데(예: 막간 2 의 아래 칸은 x=198 부터), 만화 정본은
+ * 위·아래 두 띠로 전체 폭을 쓴다. 코드 쪽 사각형으로 자르면 만화의 칸 옆구리가
+ * 잘려 검은 띠가 남는다. 그래서 만화를 쓸 때는 화면을 반으로 나눈 띠로 연다.
+ */
+const COMIC_BAND: readonly Rect[] = [
+  { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H / 2 },
+  { x: 0, y: CANVAS_H / 2, w: CANVAS_W, h: CANVAS_H / 2 },
+];
+
+function interludeImage(g: CanvasRenderingContext2D, id: number, cut: number): Rect | null {
+  const key = INTERLUDE_SCENE[id];
+  if (key === undefined) return null;
+  const img = sprites.scene(key);
+  if (img === undefined) return null;
+  const b = COMIC_BAND[cut === 0 ? 0 : 1]!;
+  g.drawImage(img, b.x, b.y, b.w, b.h, b.x, b.y, b.w, b.h);
+  return b;
+}
+
 export function drawInterlude(
   g: CanvasRenderingContext2D,
   s: InterludeState,
@@ -1411,15 +1438,25 @@ export function drawInterlude(
     const p = clamp01(local / REVEAL_TICKS);
     const r = def.panels[i === 0 ? 0 : 1];
 
+    // 만화 정본이 있으면 그 띠를 잘라 쓰고, 없으면 예전 코드 드로잉으로 떨어진다.
+    // 잉크 와이프는 **실제로 그린 사각형**을 따라가야 경계가 어긋나지 않는다.
     g.save();
-    g.beginPath();
-    g.rect(r.x, r.y, r.w, r.h);
-    g.clip();
-    def.paint[i === 0 ? 0 : 1](g, r, local);
-    inkWipe(g, r, p, 3700 + s.id * 8 + i);
+    const band = interludeImage(g, s.id, i);
+    const clipR = band ?? r;
+    if (band === null) {
+      g.beginPath();
+      g.rect(r.x, r.y, r.w, r.h);
+      g.clip();
+      def.paint[i === 0 ? 0 : 1](g, r, local);
+    }
+    inkWipe(g, clipR, p, 3700 + s.id * 8 + i);
     g.restore();
 
-    panelBorder(g, r, 3100 + s.id * 8 + i, clamp01((p - 0.12) / 0.35));
+    // 만화 정본에는 손으로 그은 칸 테두리가 이미 그려져 있다. 코드 테두리를
+    // 덧그리면 두 겹이 되어 지저분해지므로, 이미지를 쓸 때는 생략한다.
+    if (band === null) {
+      panelBorder(g, r, 3100 + s.id * 8 + i, clamp01((p - 0.12) / 0.35));
+    }
   }
 
   drawOverlay(g, tick, touch);
