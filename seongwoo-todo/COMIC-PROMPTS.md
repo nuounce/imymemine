@@ -298,14 +298,15 @@ no stars. The quietest image in the whole set.
 > 만화와 같은 §0 화풍을 쓴다 — 게임·만화·표지가 한 작가의 것으로 보이게. 단 표지는
 > 마케팅물이므로 §0의 "지정 안 된 글자 금지"에 **아래 EXACT TEXT만 예외로 허용**한다.
 >
-> **문안 확정본** (자구 그대로 — 반려 기준 동일 적용):
+> **문안 확정본** (자구 그대로 — 반려 기준 동일 적용, 2026-08-25 개정):
 > - 제목: `I.MY.ME.MINE` (마침표 3개 포함, 전부 대문자)
-> - 부제: `실패할 때마다, 과거의 내가 동료가 된다`
-> - 태그라인: `Fail now. Escape later.`
+> - 한 줄 카피: `My Squad? Me, Me, Me, Me.` — 구 부제(한국어)·구 태그라인
+>   (`Fail now. Escape later.`)을 **전부 이 한 줄로 대체**한다. 인게임 타이틀
+>   화면·브라우저 탭 제목도 동일 문안(INGAME-WORDING-SYNC §4.6).
 >
-> 후킹 설계: 표지가 답하지 않고 걸어야 하는 질문은 "왜 실패가 동료가 되지?"다.
-> 그림이 그 질문을 그린다 — 달리는 하나 + 남겨진 셋(잔상). 부제가 절반만 답하고,
-> 나머지 답은 게임이 한다.
+> 후킹 설계: 자문자답 한 줄이 훅이다 — "팀이 누구냐고? 나, 나, 나, 나."
+> 그림(달리는 하나 + 남겨진 셋)이 그 네 번의 Me를 그대로 보여준다.
+> 제목 I.MY.ME.MINE의 네 단어와도 1:1로 호응한다.
 
 ### 12a. THUMBNAIL-WIDE (1536×1024 가로 · 작게 봐도 읽히게)
 
@@ -333,7 +334,8 @@ color. These props sit in the lower quarter but must not touch or overlap
 the title or tagline text.
 TEXT (render EXACTLY, the only text in the image):
 - Title, large, upper-left, clean white stencil capitals: "I.MY.ME.MINE"
-- One line beneath it, much smaller, plain white type: "Fail now. Escape later."
+- One line beneath it, much smaller, plain white type: "My Squad? Me, Me, Me, Me."
+  (exact punctuation: one question mark, three commas, final period)
 Keep both perfectly legible at 25% size. No other lettering anywhere.
 [CONTINUITY]
 ```
@@ -353,18 +355,16 @@ read as "one person, four attitudes". Tally marks in groups of four run
 along the wall base. One fluorescent tube above makes a tight pool of light.
 TEXT (render EXACTLY, top band, centered, this order):
 - Title, large white stencil capitals: "I.MY.ME.MINE"
-- Subtitle beneath, medium, clean Korean type: "실패할 때마다, 과거의 내가 동료가 된다"
-- Small line at the very bottom of the image, above the margin:
-  "Fail now. Escape later."
-Korean glyphs must be clean and unbroken — reject on any malformed hangul.
-No other lettering anywhere.
+- One line beneath, medium, plain white type: "My Squad? Me, Me, Me, Me."
+  (exact punctuation: one question mark, three commas, final period)
+No other lettering anywhere — the bottom of the image stays textless.
 [CONTINUITY]
 ```
 
-**표지 반려 기준(추가)**: ① 제목 철자·마침표 위치(`I.MY.ME.MINE`) 불일치 ② 부제
-한글 자구 불일치·획 뭉개짐 ③ EXACT TEXT 외 글자 발생 ④ 축소(25%)에서 제목이 안
-읽힘 ⑤ 잔상 셋이 "다른 사람들"로 보임(체형이 본체와 다르면 반려 — 같은 몸이어야
-"과거의 나"로 읽힌다).
+**표지 반려 기준(추가)**: ① 제목 철자·마침표 위치(`I.MY.ME.MINE`) 불일치 ② 카피
+자구·구두점 불일치(`My Squad? Me, Me, Me, Me.` — 물음표 1·쉼표 3·마침표 1)
+③ EXACT TEXT 외 글자 발생 ④ 축소(25%)에서 제목이 안 읽힘 ⑤ 잔상 셋이 "다른
+사람들"로 보임(체형이 본체와 다르면 반려 — 같은 몸이어야 "과거의 나"로 읽힌다).
 
 ---
 

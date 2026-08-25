@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>실패할 때마다 과거의 내가 동료가 되는 60초 타임루프 스텔스 퍼즐</strong><br>
-  <em>Fail now. Escape later.</em>
+  <em>My Squad? Me, Me, Me, Me.</em>
 </p>
 
 <p align="center">
