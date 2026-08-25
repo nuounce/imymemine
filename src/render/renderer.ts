@@ -9,6 +9,7 @@
  */
 import {
   BODY_SIZE,
+  BODY_SUB,
   CANVAS_H,
   CANVAS_W,
   CCTV_FOV_TAN,
@@ -22,21 +23,28 @@ import {
   SUBPIXEL,
   TAN_SCALE,
   TILE,
-} from '../sim/constants';
+} from "../sim/constants";
 import type {
   Body,
   Guard,
   SimState,
   SlotIndex,
   TickEvents,
-} from '../sim/types';
-import { drawTopFigure, STRIDE_PX, TOP_BUILD, topPose, topQuadReach } from './figure';
+} from "../sim/types";
+import * as sprites from "./sprites";
+import {
+  drawTopFigure,
+  STRIDE_PX,
+  TOP_BUILD,
+  topPose,
+  topQuadReach,
+} from "./figure";
 import {
   drawNoteDecals,
   drawNoteOverlay,
   drawNotePrompt,
   updateNotes,
-} from './note';
+} from "./note";
 import {
   A_CONE_CCTV,
   A_CONE_CHASE,
@@ -89,7 +97,7 @@ import {
   font,
   mulHex,
   withAlpha,
-} from './palette';
+} from "./palette";
 
 /** HUD 상/하단 밴드가 먹는 세로 공간. 월드는 그 사이에 중앙 정렬된다. */
 const VIEW_TOP = 58;
@@ -369,6 +377,20 @@ export interface ViewState {
   /** 월드 리셋 감지용. tick 이 되감기면 새 루프가 시작된 것이다. */
   lastTick: number;
   lastBodyCount: number;
+
+  // ── 에셋 애니메이션 (전부 렌더 전용. 시뮬은 이 값을 읽지도 쓰지도 않는다) ──
+  /** grate id → 소음 파문 남은 프레임. 0 이면 대기 프레임으로 돌아간다. */
+  grateFx: Map<number, number>;
+  /** 터진 눈뽕 이펙트. 한 번 재생하고 사라진다(반복 없음). */
+  booms: { x: number; y: number; f: number }[];
+  /** bodyId → 직전 프레임의 `hasFlash`. false 로 떨어진 순간이 터진 순간이다. */
+  flashHeldPrev: Map<number, boolean>;
+  /** bus 이름 → 직전 activeIndex. 바뀌면 전환 애니메이션을 한 번 재생한다. */
+  busPrev: Map<string, number>;
+  /** bus 이름 → 전환 애니메이션 남은 프레임. */
+  busFx: Map<string, number>;
+  /** crate id → 직전 프레임 위치. 움직인 상자만 밀림 프레임을 쓴다. */
+  cratePrev: Map<number, { x: number; y: number }>;
 }
 
 export function createView(): ViewState {
@@ -391,6 +413,12 @@ export function createView(): ViewState {
     lampSeed: 0x9e3779b9,
     lastTick: -1,
     lastBodyCount: -1,
+    grateFx: new Map(),
+    booms: [],
+    flashHeldPrev: new Map(),
+    busPrev: new Map(),
+    busFx: new Map(),
+    cratePrev: new Map(),
   };
 }
 
@@ -496,12 +524,75 @@ function solidAt(s: SimState, tx: number, ty: number): boolean {
  * 매 틱 1회. SimState 를 읽어 렌더 전용 효과를 전진시킨다.
  * SimState 는 절대 수정하지 않는다.
  */
+/** 소음 파문(A3) 프레임 수 — 2~5번 프레임을 4프레임씩 보여 준다. */
+const GRATE_FX_FRAMES = 16;
+/** 눈뽕 폭발(A2) 8프레임을 3프레임씩. 반복하지 않는다. */
+const BOOM_FX_FRAMES = 24;
+/** 전력 전환(A5) 3~6번 프레임을 4프레임씩. */
+const BUS_FX_FRAMES = 16;
+
+/**
+ * 에셋 애니메이션 상태를 한 프레임 굴린다.
+ *
+ * 전부 `SimState` 를 **읽기만** 한다. 여기서 시뮬 필드를 하나라도 쓰면 잔상
+ * 재생이 어긋나고 결정론이 무너진다 (SPEC §4). 그래서 "터졌다"·"소리가 났다"
+ * 같은 사건도 시뮬에 플래그를 새로 다는 대신, 이미 있는 상태의 **변화**로 읽는다.
+ */
+function stepAssetFx(view: ViewState, s: SimState): void {
+  // 소음 파문 — 이번 틱에 실제로 난 소리만. 가만히 서 있으면 s.noises 가 비므로
+  // 파문도 서지 않는다("서 있으면 무음"이라는 grate 규칙이 그대로 그림이 된다).
+  for (const [id, left] of view.grateFx) {
+    if (left <= 1) view.grateFx.delete(id);
+    else view.grateFx.set(id, left - 1);
+  }
+  for (const n of s.noises) {
+    if (n.radius <= 0) continue;
+    for (const g of s.grates) {
+      if (n.x >= g.x && n.x < g.x + g.w && n.y >= g.y && n.y < g.y + g.h) {
+        view.grateFx.set(g.id, GRATE_FX_FRAMES);
+      }
+    }
+  }
+
+  // 눈뽕 폭발 — 들고 있던 몸이 이번 프레임에 빈손이 되면 그 자리에서 터진 것이다.
+  for (const b of s.bodies) {
+    const had = view.flashHeldPrev.get(b.id) ?? false;
+    if (had && !b.hasFlash && b.alive) {
+      view.booms.push({
+        x: P(b.x + BODY_SUB / 2),
+        y: P(b.y + BODY_SUB / 2),
+        f: BOOM_FX_FRAMES,
+      });
+    }
+    view.flashHeldPrev.set(b.id, b.hasFlash);
+  }
+  for (let i = view.booms.length - 1; i >= 0; i--) {
+    const b = view.booms[i]!;
+    b.f--;
+    if (b.f <= 0) view.booms.splice(i, 1);
+  }
+
+  // 전력 전환 — activeIndex 가 옮겨간 순간에만 한 번.
+  for (const [bus, left] of view.busFx) {
+    if (left <= 1) view.busFx.delete(bus);
+    else view.busFx.set(bus, left - 1);
+  }
+  for (const bus of s.powerBuses) {
+    const prev = view.busPrev.get(bus.bus);
+    if (prev !== undefined && prev !== bus.activeIndex) {
+      view.busFx.set(bus.bus, BUS_FX_FRAMES);
+    }
+    view.busPrev.set(bus.bus, bus.activeIndex);
+  }
+}
+
 export function updateView(
   view: ViewState,
   s: SimState,
   events: TickEvents,
 ): void {
   view.frame++;
+  stepAssetFx(view, s);
 
   // ── 형광등 ──
   // 시설의 등은 성실하지 않다. 4~14초에 한 번, 2~5틱만 어두워진다.
@@ -520,7 +611,8 @@ export function updateView(
   // 월드가 틱 0으로 되감기면 잔상들이 내 몸에서 한 겹씩 떨어져 나온다.
   // 모든 몸이 같은 스폰 지점에 겹쳐 있는 유일한 순간이라, 링을 슬롯 색으로
   // 시차를 두고 겹쳐 쏘면 "네가 넷으로 갈라졌다"가 한 프레임에 읽힌다.
-  const rewound = s.tick < view.lastTick || s.bodies.length !== view.lastBodyCount;
+  const rewound =
+    s.tick < view.lastTick || s.bodies.length !== view.lastBodyCount;
   if (rewound && s.bodies.length > 1) {
     for (const b of s.bodies) {
       if (b.isLive) continue;
@@ -549,11 +641,16 @@ export function updateView(
     const fx = live === undefined ? worldW / 2 : P(live.x) + BODY_SIZE / 2;
     const fy = live === undefined ? worldH / 2 : P(live.y) + BODY_SIZE / 2;
     if (worldW > CANVAS_W) {
-      camX = Math.round(Math.max(CANVAS_W - worldW, Math.min(0, CANVAS_W / 2 - fx)));
+      camX = Math.round(
+        Math.max(CANVAS_W - worldW, Math.min(0, CANVAS_W / 2 - fx)),
+      );
     }
     if (worldH > availH) {
       camY = Math.round(
-        Math.max(CANVAS_H - VIEW_BOTTOM - worldH, Math.min(VIEW_TOP, VIEW_TOP + availH / 2 - fy)),
+        Math.max(
+          CANVAS_H - VIEW_BOTTOM - worldH,
+          Math.min(VIEW_TOP, VIEW_TOP + availH / 2 - fy),
+        ),
       );
     }
   }
@@ -609,7 +706,7 @@ export function updateView(
       P(g.x),
       P(g.y),
       angleOf(g.facing),
-      g.state === 'CHASE',
+      g.state === "CHASE",
       false,
     );
 
@@ -659,7 +756,9 @@ export function updateView(
     const cur = view.gateAnim.get(g.id) ?? target;
     const step = 1 / GATE_LERP_TICKS;
     const next =
-      cur < target ? Math.min(target, cur + step) : Math.max(target, cur - step);
+      cur < target
+        ? Math.min(target, cur + step)
+        : Math.max(target, cur - step);
     view.gateAnim.set(g.id, next);
   }
   for (const id of [...view.gateAnim.keys()]) {
@@ -679,7 +778,7 @@ export function updateView(
     view.flash = Math.max(view.flash, 0.3);
     view.flashColor = C_CCTV;
     for (const g of s.guards) {
-      if (g.state === 'CHASE') {
+      if (g.state === "CHASE") {
         view.rings.push({
           x: P(g.x) + guardSizePx(g) / 2,
           y: P(g.y) + guardSizePx(g) / 2,
@@ -758,17 +857,25 @@ export function drawWorld(
 
   // 바닥·벽·조명은 레벨마다 한 번 굽는다(격자선 없음, 시드 고정 얼룩·이음새 포함).
   drawBakedWorld(ctx, s);
+  // 소음 바닥은 **바닥의 일부**다 — 구운 바닥 바로 위, 나머지 전부의 아래.
+  drawGrates(ctx, s, view);
   // 단서는 바닥에 놓인 물건이다 — 장치·몸보다 아래, 구운 바닥보다 위.
   drawNoteDecals(ctx, s, (x, y) => shadeAt(s, x, y));
   drawGates(ctx, s, view);
+  drawPowerPanels(ctx, s, view);
   drawDevices(ctx, s);
-  drawCrates(ctx, s);
+  drawCrates(ctx, s, view);
+  drawFlashPickups(ctx, s, view);
   drawCctvs(ctx, s, view);
   drawGuardCones(ctx, s, view);
+  // 레이저는 몸보다 **아래**다. 위에 그리면 빔이 사람을 덮어 누가 어디 있는지 놓친다.
+  drawLasers(ctx, s, view);
   drawGoals(ctx, s, view);
   drawGhosts(ctx, s, view);
   drawGuards(ctx, s, view);
   drawLive(ctx, s, view);
+  // 폭발은 월드에서 가장 위 — 몸까지 덮어야 "터졌다"로 읽힌다.
+  drawBooms(ctx, view);
   drawRings(ctx, view);
   // 키캡은 몸보다 위에 뜬다 — 잔상 뒤에 가려지면 안내가 안내로 기능하지 않는다.
   drawNotePrompt(ctx, s);
@@ -778,7 +885,7 @@ export function drawWorld(
   // ── 시설 레이어(전부 화면 공간) ──
   // 순서가 중요하다: 등이 꺼지고 → 가장자리가 죽고 → 그 위에 필름 질감(그레인·색수차).
   if (view.lampFrames > 0) {
-    ctx.fillStyle = withAlpha('#000000', A_LAMP_DIP);
+    ctx.fillStyle = withAlpha("#000000", A_LAMP_DIP);
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   }
   drawVignette(ctx);
@@ -807,10 +914,17 @@ function drawVignette(ctx: CanvasRenderingContext2D): void {
   if (vignetteGrad === undefined || vignetteCtx !== ctx) {
     const cx = CANVAS_W / 2;
     const cy = CANVAS_H / 2;
-    const g = ctx.createRadialGradient(cx, cy, CANVAS_H * 0.4, cx, cy, CANVAS_W * 0.72);
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(0.6, withAlpha('#000000', A_VIGNETTE * 0.3));
-    g.addColorStop(1, withAlpha('#000000', A_VIGNETTE));
+    const g = ctx.createRadialGradient(
+      cx,
+      cy,
+      CANVAS_H * 0.4,
+      cx,
+      cy,
+      CANVAS_W * 0.72,
+    );
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(0.6, withAlpha("#000000", A_VIGNETTE * 0.3));
+    g.addColorStop(1, withAlpha("#000000", A_VIGNETTE));
     vignetteGrad = g;
     vignetteCtx = ctx;
   }
@@ -861,11 +975,11 @@ function grainPattern(
   const cell = slot === 0 ? 1 : 2;
   const cut = slot === 0 ? 0.45 : 0.3;
   if (s.tile === undefined) {
-    if (typeof document === 'undefined') return undefined;
-    const cv = document.createElement('canvas');
+    if (typeof document === "undefined") return undefined;
+    const cv = document.createElement("canvas");
     cv.width = GRAIN_TILE;
     cv.height = GRAIN_TILE;
-    const g = cv.getContext('2d');
+    const g = cv.getContext("2d");
     if (g === null) return undefined;
     const img = g.createImageData(GRAIN_TILE, GRAIN_TILE);
     const cells = GRAIN_TILE / cell;
@@ -874,7 +988,8 @@ function grainPattern(
     for (let i = 0; i < noise.length; i++) noise[i] = rnd();
     for (let y = 0; y < GRAIN_TILE; y++) {
       for (let x = 0; x < GRAIN_TILE; x++) {
-        const v = noise[Math.floor(y / cell) * cells + Math.floor(x / cell)] ?? 0.5;
+        const v =
+          noise[Math.floor(y / cell) * cells + Math.floor(x / cell)] ?? 0.5;
         const p = (y * GRAIN_TILE + x) * 4;
         // 밝은 알갱이 절반, 어두운 알갱이 절반. 무채색이라 어떤 색 위에 얹어도 색조를 밀지 않는다.
         const lum = v > 0.5 ? 255 : 0;
@@ -890,7 +1005,7 @@ function grainPattern(
     s.tile = cv;
   }
   if (s.pat === undefined || s.ctx !== ctx) {
-    const p = ctx.createPattern(s.tile, 'repeat');
+    const p = ctx.createPattern(s.tile, "repeat");
     if (p === null) return undefined;
     s.pat = p;
     s.ctx = ctx;
@@ -935,17 +1050,17 @@ function drawFringe(ctx: CanvasRenderingContext2D): void {
   if (fringeL === undefined || fringeR === undefined || fringeCtx !== ctx) {
     const edge = CANVAS_W * 0.22;
     const l = ctx.createLinearGradient(0, 0, edge, 0);
-    l.addColorStop(0, withAlpha('#ff4a3c', A_FRINGE));
-    l.addColorStop(1, withAlpha('#ff4a3c', 0));
+    l.addColorStop(0, withAlpha("#ff4a3c", A_FRINGE));
+    l.addColorStop(1, withAlpha("#ff4a3c", 0));
     const r = ctx.createLinearGradient(CANVAS_W, 0, CANVAS_W - edge, 0);
-    r.addColorStop(0, withAlpha('#3ce0ff', A_FRINGE));
-    r.addColorStop(1, withAlpha('#3ce0ff', 0));
+    r.addColorStop(0, withAlpha("#3ce0ff", A_FRINGE));
+    r.addColorStop(1, withAlpha("#3ce0ff", 0));
     fringeL = l;
     fringeR = r;
     fringeCtx = ctx;
   }
   ctx.save();
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = "screen";
   ctx.fillStyle = fringeL;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   ctx.fillStyle = fringeR;
@@ -1024,12 +1139,12 @@ function levelKey(s: SimState): string {
 function clipTiles(
   g: CanvasRenderingContext2D,
   s: SimState,
-  want: 'open' | 'solid',
+  want: "open" | "solid",
 ): void {
   g.beginPath();
   for (let ty = 0; ty < s.height; ty++) {
     for (let tx = 0; tx < s.width; tx++) {
-      if (solidAt(s, tx, ty) !== (want === 'solid')) continue;
+      if (solidAt(s, tx, ty) !== (want === "solid")) continue;
       g.rect(tx * TILE, ty * TILE, TILE, TILE);
     }
   }
@@ -1099,7 +1214,7 @@ function bakeFloor(g: CanvasRenderingContext2D, s: SimState): void {
 
   // 신축 줄눈(세로) — 불규칙 간격 + 지터.
   g.lineWidth = 1;
-  for (let x = TILE * (2 + Math.floor(rnd() * 2)); x < w; ) {
+  for (let x = TILE * (2 + Math.floor(rnd() * 2)); x < w;) {
     const jx = Math.round(x + (rnd() - 0.5) * 14) + 0.5;
     g.strokeStyle = withAlpha(C_SEAM, 0.6);
     g.beginPath();
@@ -1114,7 +1229,7 @@ function bakeFloor(g: CanvasRenderingContext2D, s: SimState): void {
     x += TILE * (3 + Math.floor(rnd() * 3));
   }
   // 가로 줄눈은 더 드물게 — 두 방향이 같은 밀도면 다시 격자로 읽힌다.
-  for (let y = TILE * (2 + Math.floor(rnd() * 3)); y < h; ) {
+  for (let y = TILE * (2 + Math.floor(rnd() * 3)); y < h;) {
     const jy = Math.round(y + (rnd() - 0.5) * 14) + 0.5;
     g.strokeStyle = withAlpha(C_SEAM, 0.5);
     g.beginPath();
@@ -1226,7 +1341,12 @@ function bakeWallContact(g: CanvasRenderingContext2D, s: SimState): void {
       const y = ty * TILE;
 
       if (!solidAt(s, tx, ty + 1)) {
-        const gd = g.createLinearGradient(0, y + TILE, 0, y + TILE + WALL_SHADOW_H);
+        const gd = g.createLinearGradient(
+          0,
+          y + TILE,
+          0,
+          y + TILE + WALL_SHADOW_H,
+        );
         gd.addColorStop(0, withAlpha(C_BG, A_WALL_SHADOW));
         gd.addColorStop(1, withAlpha(C_BG, 0));
         g.fillStyle = gd;
@@ -1239,7 +1359,10 @@ function bakeWallContact(g: CanvasRenderingContext2D, s: SimState): void {
           for (let k = 0; k < n; k++) {
             const sx = x + 3 + rnd() * (TILE - 8);
             const len = 6 + rnd() * 13;
-            g.fillStyle = withAlpha(rust ? C_RUST : C_GRIME, 0.18 + rnd() * 0.18);
+            g.fillStyle = withAlpha(
+              rust ? C_RUST : C_GRIME,
+              0.18 + rnd() * 0.18,
+            );
             g.fillRect(sx, y + TILE, 1 + Math.floor(rnd() * 2), len);
           }
         }
@@ -1252,7 +1375,12 @@ function bakeWallContact(g: CanvasRenderingContext2D, s: SimState): void {
         g.fillRect(x - WALL_SHADOW_W, y, WALL_SHADOW_W, TILE);
       }
       if (!solidAt(s, tx + 1, ty)) {
-        const gd = g.createLinearGradient(x + TILE, 0, x + TILE + WALL_SHADOW_W, 0);
+        const gd = g.createLinearGradient(
+          x + TILE,
+          0,
+          x + TILE + WALL_SHADOW_W,
+          0,
+        );
         gd.addColorStop(0, withAlpha(C_BG, A_WALL_SHADOW * 0.7));
         gd.addColorStop(1, withAlpha(C_BG, 0));
         g.fillStyle = gd;
@@ -1283,26 +1411,26 @@ function bakeLightMask(
 ): HTMLCanvasElement | undefined {
   const w = s.width * TILE;
   const h = s.height * TILE;
-  if (typeof document === 'undefined') return undefined;
-  const mask = document.createElement('canvas');
+  if (typeof document === "undefined") return undefined;
+  const mask = document.createElement("canvas");
   mask.width = w;
   mask.height = h;
-  const m = mask.getContext('2d');
+  const m = mask.getContext("2d");
   if (m === null) return undefined;
 
   m.fillStyle = withAlpha(C_DARK_AIR, A_LIGHT_FALLOFF * (1 - LIGHT_AMBIENT));
   m.fillRect(0, 0, w, h);
 
-  m.globalCompositeOperation = 'destination-out';
+  m.globalCompositeOperation = "destination-out";
   for (const l of lamps) {
     m.save();
     m.translate(l.x, l.y);
     m.scale(1, LAMP_RY / LAMP_RX);
     const gd = m.createRadialGradient(0, 0, 0, 0, 0, LAMP_RX);
-    gd.addColorStop(0, 'rgba(0,0,0,1)');
-    gd.addColorStop(0.34, 'rgba(0,0,0,0.86)');
-    gd.addColorStop(0.68, 'rgba(0,0,0,0.42)');
-    gd.addColorStop(1, 'rgba(0,0,0,0)');
+    gd.addColorStop(0, "rgba(0,0,0,1)");
+    gd.addColorStop(0.34, "rgba(0,0,0,0.86)");
+    gd.addColorStop(0.68, "rgba(0,0,0,0.42)");
+    gd.addColorStop(1, "rgba(0,0,0,0)");
     m.fillStyle = gd;
     m.fillRect(-LAMP_RX, -LAMP_RX, LAMP_RX * 2, LAMP_RX * 2);
     m.restore();
@@ -1347,15 +1475,30 @@ function bakeLamps(g: CanvasRenderingContext2D, lamps: Lamp[]): void {
     );
     // 하우징 아래 모서리 그늘 — 기구도 두께가 있다.
     g.fillStyle = withAlpha(C_BG, 0.5);
-    g.fillRect(l.x - LAMP_TUBE_W / 2 - 3, l.y + LAMP_TUBE_H / 2 + 3, LAMP_TUBE_W + 6, 2);
+    g.fillRect(
+      l.x - LAMP_TUBE_W / 2 - 3,
+      l.y + LAMP_TUBE_H / 2 + 3,
+      LAMP_TUBE_W + 6,
+      2,
+    );
     // 실측 기준: 이 알파에서 튜브 최고 밝기 L≈0.60. 조작 몸(I, L≈0.975)이 화면에서
     // 언제나 가장 밝은 것이어야 하므로 여기를 0.75 이상으로 올리지 말 것.
     g.fillStyle = withAlpha(C_LAMP, 0.62);
-    g.fillRect(l.x - LAMP_TUBE_W / 2, l.y - LAMP_TUBE_H / 2, LAMP_TUBE_W, LAMP_TUBE_H);
+    g.fillRect(
+      l.x - LAMP_TUBE_W / 2,
+      l.y - LAMP_TUBE_H / 2,
+      LAMP_TUBE_W,
+      LAMP_TUBE_H,
+    );
     // 양 끝 소켓 — 막대가 기구에 꽂혀 있다는 표시.
     g.fillStyle = withAlpha(C_METAL_DARK, 0.95);
     g.fillRect(l.x - LAMP_TUBE_W / 2, l.y - LAMP_TUBE_H / 2, 3, LAMP_TUBE_H);
-    g.fillRect(l.x + LAMP_TUBE_W / 2 - 3, l.y - LAMP_TUBE_H / 2, 3, LAMP_TUBE_H);
+    g.fillRect(
+      l.x + LAMP_TUBE_W / 2 - 3,
+      l.y - LAMP_TUBE_H / 2,
+      3,
+      LAMP_TUBE_H,
+    );
   }
 }
 
@@ -1363,14 +1506,14 @@ function bakeLamps(g: CanvasRenderingContext2D, lamps: Lamp[]): void {
 function worldBake(s: SimState): WorldBake | undefined {
   const key = levelKey(s);
   if (bake !== undefined && bake.key === key) return bake;
-  if (typeof document === 'undefined') return undefined;
+  if (typeof document === "undefined") return undefined;
 
   const w = s.width * TILE;
   const h = s.height * TILE;
-  const cv = document.createElement('canvas');
+  const cv = document.createElement("canvas");
   cv.width = w;
   cv.height = h;
-  const g = cv.getContext('2d');
+  const g = cv.getContext("2d");
   if (g === null) return undefined;
   g.imageSmoothingEnabled = false;
 
@@ -1379,7 +1522,7 @@ function worldBake(s: SimState): WorldBake | undefined {
   // 순서가 곧 조명 모델이다: 바닥을 칠하고 → 벽 그림자를 얹고 → **바닥에만** 감쇠를
   // 전부 먹이고 → 그 위에 벽을 세우고 → 벽에는 감쇠를 절반만 먹인다(WALL_LIGHT_MIX).
   g.save();
-  clipTiles(g, s, 'open');
+  clipTiles(g, s, "open");
   bakeFloor(g, s);
   bakeWallContact(g, s);
   g.restore();
@@ -1387,7 +1530,7 @@ function worldBake(s: SimState): WorldBake | undefined {
   const mask = bakeLightMask(s, lamps);
   if (mask !== undefined) {
     g.save();
-    clipTiles(g, s, 'open');
+    clipTiles(g, s, "open");
     g.drawImage(mask, 0, 0);
     g.restore();
   }
@@ -1398,7 +1541,7 @@ function worldBake(s: SimState): WorldBake | undefined {
   const pat = grainPattern(g, 1);
   if (pat !== undefined) {
     g.save();
-    clipTiles(g, s, 'solid');
+    clipTiles(g, s, "solid");
     g.globalAlpha = A_GRAIN_FLOOR;
     g.fillStyle = pat;
     g.fillRect(0, 0, w, h);
@@ -1407,7 +1550,7 @@ function worldBake(s: SimState): WorldBake | undefined {
 
   if (mask !== undefined) {
     g.save();
-    clipTiles(g, s, 'solid');
+    clipTiles(g, s, "solid");
     g.globalAlpha = WALL_LIGHT_MIX;
     g.drawImage(mask, 0, 0);
     g.restore();
@@ -1544,18 +1687,32 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     const k = shadeAt(s, x + w / 2, y + h / 2);
     const col = p.on ? C_ON : C_OFF;
 
-    // 바닥에 파인 자리 — 판 둘레의 어두운 홈. 판이 바닥 위에 뜬 게 아니라 박혀 있다.
-    ctx.fillStyle = withAlpha(C_BG, 0.4);
-    ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
-    ctx.fillStyle = mulHex(C_METAL, k * (p.on ? 0.85 : 1));
-    ctx.fillRect(x, y, w, h);
-    // 베벨: 위·왼쪽은 빛을 받고 아래·오른쪽은 그늘진다. 눌린 판은 이게 반대로 뒤집힌다.
-    ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), p.on ? 0.25 : 0.65);
-    ctx.fillRect(x, y, w, 1);
-    ctx.fillRect(x, y, 1, h);
-    ctx.fillStyle = withAlpha(C_METAL_DARK, p.on ? 0.95 : 0.7);
-    ctx.fillRect(x, y + h - 1, w, 1);
-    ctx.fillRect(x + w - 1, y, 1, h);
+    // 판 몸통은 에셋. 다만 **밟는 것이라는 표시는 코드가 계속 그린다** —
+    // B7 시트에는 그 표시가 없어서, 에셋만 쓰면 처음 온 사람이 이 판을 다시
+    // 방 이름표로 읽는다(심사에서 세 명이 실제로 그렇게 읽었다).
+    const plateSprite = sprites.has("plate");
+    if (plateSprite) {
+      const cell = sprites.cellOf("plate");
+      const step = cell === undefined ? TILE : cell.w;
+      for (let ty = 0; ty < h; ty += step) {
+        for (let tx = 0; tx < w; tx += step) {
+          sprites.draw(ctx, "plate", p.on ? 1 : 0, 0, x + tx, y + ty);
+        }
+      }
+    } else {
+      // 바닥에 파인 자리 — 판 둘레의 어두운 홈. 판이 바닥 위에 뜬 게 아니라 박혀 있다.
+      ctx.fillStyle = withAlpha(C_BG, 0.4);
+      ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+      ctx.fillStyle = mulHex(C_METAL, k * (p.on ? 0.85 : 1));
+      ctx.fillRect(x, y, w, h);
+      // 베벨: 위·왼쪽은 빛을 받고 아래·오른쪽은 그늘진다. 눌린 판은 이게 반대로 뒤집힌다.
+      ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), p.on ? 0.25 : 0.65);
+      ctx.fillRect(x, y, w, 1);
+      ctx.fillRect(x, y, 1, h);
+      ctx.fillStyle = withAlpha(C_METAL_DARK, p.on ? 0.95 : 0.7);
+      ctx.fillRect(x, y + h - 1, w, 1);
+      ctx.fillRect(x + w - 1, y, 1, h);
+    }
 
     // 미끄럼 방지 홈 — **밟기 전에도 "밟는 것"으로 보여야 한다.**
     //
@@ -1591,9 +1748,12 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
       // 안전 도색은 **어두운 구석에서도 읽혀야** 한다. 방 조도(k)를 그대로 곱하면
       // 등에서 먼 발판이 배경에 묻히는데, 스테이지 1 의 발판이 정확히 그 자리다.
       // 그래서 감쇠에 바닥을 깔아 준다 — 현실의 축광 도색과 같은 이유다.
-      ctx.strokeStyle = withAlpha(mulHex(C_FLOOR_MARK, Math.max(k, 0.78)), p.on ? 0.35 : 0.95);
+      ctx.strokeStyle = withAlpha(
+        mulHex(C_FLOOR_MARK, Math.max(k, 0.78)),
+        p.on ? 0.35 : 0.95,
+      );
       ctx.lineWidth = 2;
-      ctx.lineJoin = 'miter';
+      ctx.lineJoin = "miter";
       ctx.beginPath();
       ctx.moveTo(cx - arm, top);
       ctx.lineTo(cx, top + arm * 0.75);
@@ -1604,21 +1764,25 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     // 상태 램프 — 테두리 안쪽 한 줄. ON 이면 초록이 확실히 살아난다.
     // OFF 는 채널 색(C_OFF, 남색)이 아니라 **깎인 금속 홈**이다 — 남색 선은 콘크리트
     // 위에서 유일하게 남은 "사이버" 잔재이고, 어두운 방에서는 아예 안 보인다.
-    ctx.strokeStyle = p.on ? withAlpha(col, 0.95) : withAlpha(C_METAL_LIP, 0.45);
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
-    if (p.on) {
-      ctx.strokeStyle = withAlpha(col, 0.22);
-      ctx.lineWidth = 6;
+    if (!plateSprite) {
+      ctx.strokeStyle = p.on
+        ? withAlpha(col, 0.95)
+        : withAlpha(C_METAL_LIP, 0.45);
+      ctx.lineWidth = 2;
       ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
+      if (p.on) {
+        ctx.strokeStyle = withAlpha(col, 0.22);
+        ctx.lineWidth = 6;
+        ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
+      }
     }
     // 채널 라벨 — 어느 발판이 어느 문을 여는지는 여전히 읽혀야 하지만, **표지판의
     // 제목처럼 굵게 가운데 박히면 판 전체가 이름표로 읽힌다**. 그래서 아래쪽으로
     // 내려 각인처럼 눕힌다. 홈과 갈매기가 먼저 보이고, 채널은 그 다음에 읽힌다.
     ctx.fillStyle = p.on ? withAlpha(col, 0.9) : withAlpha(C_METAL_LIP, 0.72);
     ctx.font = font(7);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.fillText(p.channel.toUpperCase(), x + w / 2, y + h / 2);
   }
 
@@ -1630,32 +1794,46 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     const col = b.on ? C_ON : C_OFF;
 
     contactShadow(ctx, cx, cy, 18, 0.8);
-    // 하우징: 벽에 붙은 금속 함. 위쪽 립이 빛을 받는다.
-    ctx.fillStyle = mulHex(C_METAL, k);
-    ctx.beginPath();
-    ctx.arc(cx, cy, 11, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 10.5, Math.PI, TAU);
-    ctx.stroke();
-    ctx.strokeStyle = withAlpha(C_METAL_DARK, 0.9);
-    ctx.beginPath();
-    ctx.arc(cx, cy, 10.5, 0, Math.PI);
-    ctx.stroke();
-
-    // 램프. 여기만 빛난다.
-    ctx.fillStyle = withAlpha(col, b.on ? 0.95 : 0.6);
-    ctx.beginPath();
-    ctx.arc(cx, cy, 6, 0, TAU);
-    ctx.fill();
-    if (b.on) {
-      ctx.fillStyle = withAlpha(col, 0.2);
+    // 눌린 직후 몇 틱은 PRESSED 프레임. 그다음은 ON/OFF 정지 프레임이다.
+    const pressed = b.on && b.holdTicks > 0 && b.timer > b.holdTicks - 8;
+    if (
+      !sprites.drawCentered(
+        ctx,
+        "wallButton",
+        pressed ? 2 : b.on ? 1 : 0,
+        0,
+        cx,
+        cy,
+      )
+    ) {
+      // 하우징: 벽에 붙은 금속 함. 위쪽 립이 빛을 받는다.
+      ctx.fillStyle = mulHex(C_METAL, k);
       ctx.beginPath();
-      ctx.arc(cx, cy, 10, 0, TAU);
+      ctx.arc(cx, cy, 11, 0, TAU);
       ctx.fill();
+      ctx.strokeStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10.5, Math.PI, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = withAlpha(C_METAL_DARK, 0.9);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10.5, 0, Math.PI);
+      ctx.stroke();
+
+      // 램프. 여기만 빛난다.
+      ctx.fillStyle = withAlpha(col, b.on ? 0.95 : 0.6);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, TAU);
+      ctx.fill();
+      if (b.on) {
+        ctx.fillStyle = withAlpha(col, 0.2);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 10, 0, TAU);
+        ctx.fill();
+      }
     }
+
     if (b.on && b.holdTicks > 0) {
       const frac = Math.max(0, Math.min(1, b.timer / b.holdTicks));
       ctx.strokeStyle = C_ON;
@@ -1666,9 +1844,9 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     }
     // 라벨은 강철에 찍은 스텐실 — OFF 일 때 남색(C_OFF)으로 두면 어두운 방에서 사라진다.
     ctx.fillStyle = b.on ? withAlpha(col, 0.9) : withAlpha(C_METAL_LIP, 0.85);
-    ctx.font = font(8, 'bold');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.font = font(8, "bold");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.fillText(b.channel.toUpperCase(), cx, cy - 20);
   }
 
@@ -1680,37 +1858,258 @@ function drawDevices(ctx: CanvasRenderingContext2D, s: SimState): void {
     const col = l.on ? C_ON : C_OFF;
 
     contactShadow(ctx, cx, cy + 4, 20, 0.8);
-    ctx.fillStyle = mulHex(C_METAL, k);
-    ctx.fillRect(cx - 9, cy + 3, 18, 6);
-    ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
-    ctx.fillRect(cx - 9, cy + 3, 18, 1);
-    ctx.fillStyle = withAlpha(C_METAL_DARK, 0.95);
-    ctx.fillRect(cx - 9, cy + 8, 18, 1);
+    // 프레임 1 = 손잡이 왼쪽(OFF), 프레임 2 = 오른쪽(ON). 실제 스위치 상태와 같다.
+    if (!sprites.drawCentered(ctx, "lever", l.on ? 1 : 0, 0, cx, cy)) {
+      ctx.fillStyle = mulHex(C_METAL, k);
+      ctx.fillRect(cx - 9, cy + 3, 18, 6);
+      ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
+      ctx.fillRect(cx - 9, cy + 3, 18, 1);
+      ctx.fillStyle = withAlpha(C_METAL_DARK, 0.95);
+      ctx.fillRect(cx - 9, cy + 8, 18, 1);
 
-    // 손잡이 축은 금속, 끝의 노브만 램프.
-    ctx.strokeStyle = mulHex(C_METAL_LIP, k);
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy + 5);
-    ctx.lineTo(cx + (l.on ? 7 : -7), cy - 9);
-    ctx.stroke();
-    ctx.fillStyle = withAlpha(col, l.on ? 1 : 0.7);
-    ctx.beginPath();
-    ctx.arc(cx + (l.on ? 7 : -7), cy - 9, 3.5, 0, TAU);
-    ctx.fill();
+      // 손잡이 축은 금속, 끝의 노브만 램프.
+      ctx.strokeStyle = mulHex(C_METAL_LIP, k);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + 5);
+      ctx.lineTo(cx + (l.on ? 7 : -7), cy - 9);
+      ctx.stroke();
+      ctx.fillStyle = withAlpha(col, l.on ? 1 : 0.7);
+      ctx.beginPath();
+      ctx.arc(cx + (l.on ? 7 : -7), cy - 9, 3.5, 0, TAU);
+      ctx.fill();
+    }
+
     ctx.fillStyle = l.on ? withAlpha(col, 0.9) : withAlpha(C_METAL_LIP, 0.85);
-    ctx.font = font(8, 'bold');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.font = font(8, "bold");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.fillText(l.channel.toUpperCase(), cx, cy - 20);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// A그룹 — 지금까지 화면에 **아무것도 없던** 장치들
+//
+// grate·laser·powerBus·flash 는 레벨 데이터에는 있는데 그리는 코드가 없었다.
+// 2막의 "빠른 길은 시끄럽다", 3막의 "통과할 시각을 고른다", 4막의 "하나를 켜면
+// 하나가 꺼진다"가 전부 화면에 안 나와 있었다는 뜻이다. 스프라이트가 아직
+// 안 왔으면 각 함수는 **코드로 그린 대체 표현**을 남긴다 — 빈 바닥보다 낫다.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 소음 바닥. 밟고 **움직이는** 동안만 파문이 뜬다.
+ *
+ * 바닥에 깔린 것이므로 구운 바닥 바로 위, 다른 장치보다 아래에 그린다.
+ */
+function drawGrates(
+  ctx: CanvasRenderingContext2D,
+  s: SimState,
+  view: ViewState,
+): void {
+  for (const g of s.grates) {
+    const x = P(g.x);
+    const y = P(g.y);
+    const w = P(g.w);
+    const h = P(g.h);
+    const left = view.grateFx.get(g.id) ?? 0;
+    // 남은 프레임 → 2~5번 프레임. 대기(0번)는 파문이 없는 격자 그 자체다.
+    const col =
+      left <= 0 ? 0 : 1 + Math.min(3, Math.floor((GRATE_FX_FRAMES - left) / 4));
+
+    if (sprites.has("grate")) {
+      const cell = sprites.cellOf("grate");
+      const step = cell === undefined ? TILE : cell.w;
+      for (let ty = 0; ty < h; ty += step) {
+        for (let tx = 0; tx < w; tx += step) {
+          sprites.draw(ctx, "grate", col, 0, x + tx, y + ty);
+        }
+      }
+      continue;
+    }
+
+    // 폴백 — 강철 격자를 코드로. 소음이 나면 테두리가 밝아진다.
+    const k = shadeAt(s, x + w / 2, y + h / 2);
+    ctx.fillStyle = withAlpha(C_METAL_DARK, 0.55);
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.45);
+    for (let gy = y + 3; gy < y + h; gy += 6) ctx.fillRect(x + 2, gy, w - 4, 1);
+    ctx.strokeStyle = withAlpha(mulHex(C_METAL_LIP, k), left > 0 ? 0.9 : 0.35);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  }
+}
+
+/**
+ * 주기 레이저. 발사기는 양 끝에, 빔은 그 사이를 **타일링**해서 잇는다.
+ *
+ * 빔을 한 장 늘려 쓰면 픽셀이 뭉개지므로 필요한 길이만큼 반복해 붙인다.
+ * 지금 레벨의 레이저는 전부 수직이라 90° 회전해 그린다 — 정확히 직각이고
+ * 평행이동이 정수라 회전해도 픽셀이 흐려지지 않는다.
+ *
+ * **꺼져 있으면 빔을 한 픽셀도 그리지 않는다.** 발사기만 OFF 프레임으로 남는다.
+ */
+function drawLasers(
+  ctx: CanvasRenderingContext2D,
+  s: SimState,
+  view: ViewState,
+): void {
+  for (const l of s.lasers) {
+    const x0 = P(l.x0);
+    const y0 = P(l.y0);
+    const x1 = P(l.x1);
+    const y1 = P(l.y1);
+    const vertical = Math.abs(y1 - y0) >= Math.abs(x1 - x0);
+    const len = vertical ? Math.abs(y1 - y0) : Math.abs(x1 - x0);
+
+    if (l.on) {
+      const beam = sprites.cellOf("laserBeam");
+      if (beam !== undefined) {
+        // 4프레임을 6프레임씩 — 너무 빠르면 깜빡임으로 읽힌다.
+        const f = Math.floor(view.frame / 6) % 4;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.translate(
+          Math.round(Math.min(x0, x1)),
+          Math.round(Math.min(y0, y1)),
+        );
+        if (vertical) ctx.rotate(Math.PI / 2);
+        // 회전 후 좌표계에서 x 가 진행 방향이다. 빔 두께의 절반만큼 올려 중심을 맞춘다.
+        for (let d = 0; d < len; d += beam.w) {
+          sprites.draw(ctx, "laserBeam", f, 0, d, -beam.h / 2);
+        }
+        ctx.restore();
+      } else {
+        // 폴백 — 저채도 흰빛 선. 판정과 같은 선분이다.
+        ctx.strokeStyle = withAlpha(C_CCTV_SCAN, 0.85);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+    }
+
+    // 발사기는 켜지든 꺼지든 양 끝에 남는다 — 여기가 위험한 자리라는 표시다.
+    const emitCol = l.on ? 1 : 0;
+    if (!sprites.drawCentered(ctx, "laserEmitter", emitCol, 0, x0, y0)) {
+      ctx.fillStyle = withAlpha(l.on ? C_CCTV_SCAN : C_METAL_LIP, 0.8);
+      ctx.fillRect(x0 - 5, y0 - 5, 10, 10);
+    }
+    if (!sprites.drawCentered(ctx, "laserEmitter", emitCol, 0, x1, y1)) {
+      ctx.fillStyle = withAlpha(l.on ? C_CCTV_SCAN : C_METAL_LIP, 0.8);
+      ctx.fillRect(x1 - 5, y1 - 5, 10, 10);
+    }
+  }
+}
+
+/** 바닥에 놓인 눈뽕. 주운 것은 그리지 않는다. */
+function drawFlashPickups(
+  ctx: CanvasRenderingContext2D,
+  s: SimState,
+  view: ViewState,
+): void {
+  for (const f of s.flashes) {
+    if (f.taken) continue;
+    const cx = P(f.x) + TILE / 2;
+    const cy = P(f.y) + TILE / 2;
+    // 바닥에 놓인 물건이라는 증거. 스프라이트가 공중에 뜨지 않게 먼저 깐다.
+    contactShadow(ctx, cx, cy + 5, 14, 0.7);
+    // 12프레임에 한 칸 — 천천히 도는 금속 반사다. 스스로 빛나지 않는다.
+    const col = Math.floor(view.frame / 12) % 4;
+    if (sprites.drawCentered(ctx, "flashbang", col, 0, cx, cy)) continue;
+
+    const k = shadeAt(s, cx, cy);
+    ctx.fillStyle = mulHex(C_METAL_LIP, k);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = withAlpha(C_METAL_DARK, 0.9);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+/**
+ * 터진 눈뽕. **한 번만** 재생하고 사라진다.
+ *
+ * 화면 전체를 덮는 흰 플래시는 이미 `view.flash` 가 하고 있으므로 여기서는
+ * 스프라이트만 얹는다. 둘을 겹쳐 세게 때리면 광과민성 위험이 커진다.
+ */
+function drawBooms(ctx: CanvasRenderingContext2D, view: ViewState): void {
+  for (const b of view.booms) {
+    const col = Math.min(7, Math.floor((BOOM_FX_FRAMES - b.f) / 3));
+    sprites.drawCentered(ctx, "flashbangBoom", col, 0, b.x, b.y);
+  }
+}
+
+/**
+ * 전력 패널. `PowerBus` 에는 좌표가 없으므로(채널 묶음일 뿐이다) **그 채널을
+ * 쥐고 있는 장치 위**에 붙인다 — 플레이어가 "지금 어느 쪽에 전기가 갔나"를
+ * 물어보는 자리가 바로 거기다.
+ */
+function drawPowerPanels(
+  ctx: CanvasRenderingContext2D,
+  s: SimState,
+  view: ViewState,
+): void {
+  if (s.powerBuses.length === 0) return;
+  for (const bus of s.powerBuses) {
+    const left = view.busFx.get(bus.bus) ?? 0;
+    for (let i = 0; i < bus.channels.length; i++) {
+      const ch = bus.channels[i]!;
+      const live = i === bus.activeIndex;
+      // 전환 중이면 3~6번, 아니면 1(ON)·2(OFF) 정지 프레임.
+      const col =
+        left > 0
+          ? 2 + Math.min(3, Math.floor((BUS_FX_FRAMES - left) / 4))
+          : live
+            ? 0
+            : 1;
+      for (const pos of channelSources(s, ch)) {
+        const cx = pos.x;
+        const cy = pos.y - 26;
+        if (sprites.drawCentered(ctx, "powerBus", col, 0, cx, cy)) continue;
+        ctx.fillStyle = withAlpha(live ? C_ON : C_OFF, 0.85);
+        ctx.fillRect(cx - 7, cy - 4, 14, 8);
+        ctx.strokeStyle = withAlpha(C_METAL_LIP, 0.8);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx - 7.5, cy - 4.5, 15, 9);
+      }
+    }
+  }
+}
+
+/** 이 채널을 **켜는** 장치들의 화면 좌표. 레버·버튼·발판이 소스다. */
+function channelSources(
+  s: SimState,
+  channel: string,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (const l of s.levers) {
+    if (l.channel === channel)
+      out.push({ x: tileCenterPx(l.x), y: tileCenterPx(l.y) });
+  }
+  for (const b of s.buttons) {
+    if (b.channel === channel)
+      out.push({ x: tileCenterPx(b.x), y: tileCenterPx(b.y) });
+  }
+  for (const p of s.plates) {
+    if (p.channel === channel)
+      out.push({ x: P(p.x) + P(p.w) / 2, y: P(p.y) + P(p.h) / 2 });
+  }
+  return out;
 }
 
 /**
  * 상자. 위에서 보면 **뚜껑(윗면)** 이 보이고, 카메라 쪽 측면이 두께로 드러나며,
  * 바닥에 접지 그림자가 깔린다 — 벽과 같은 작도법이라 같은 세계의 물건으로 읽힌다.
  */
-function drawCrates(ctx: CanvasRenderingContext2D, s: SimState): void {
+function drawCrates(
+  ctx: CanvasRenderingContext2D,
+  s: SimState,
+  view: ViewState,
+): void {
   for (const c of s.crates) {
     const x = P(c.x);
     const y = P(c.y);
@@ -1720,6 +2119,23 @@ function drawCrates(ctx: CanvasRenderingContext2D, s: SimState): void {
     // 상자는 바닥에 **딱 붙어** 있다 — 그림자를 몸집만큼 벌리면 상자가 구덩이 위에
     // 뜬 것처럼 보인다. 인물(SHADOW_W=20)보다 몸집이 큰 만큼만 넓힌다.
     contactShadow(ctx, x + S / 2, y + S - 5, S * 0.78, 0.9);
+
+    // 밀리는 중에만 흔들림 프레임(2·3번)을 쓴다. 가만히 있는 상자는 0번이다.
+    const prev = view.cratePrev.get(c.id);
+    const moved = prev !== undefined && (prev.x !== c.x || prev.y !== c.y);
+    view.cratePrev.set(c.id, { x: c.x, y: c.y });
+    if (
+      sprites.draw(
+        ctx,
+        "crate",
+        moved ? 1 + (Math.floor(view.frame / 4) % 2) : 0,
+        0,
+        x,
+        y,
+      )
+    ) {
+      continue;
+    }
 
     // 윗면(뚜껑).
     ctx.fillStyle = mulHex(C_METAL, k);
@@ -1778,7 +2194,10 @@ function conePolygon(
     }
     // 노이즈는 뺄셈만 한다. 그려진 콘은 실제 시야보다 절대 크지 않다.
     if (noise > 0) {
-      d = Math.max(0, d - (Math.sin(i * 2.7 + frame * 0.33) * 0.5 + 0.5) * noise);
+      d = Math.max(
+        0,
+        d - (Math.sin(i * 2.7 + frame * 0.33) * 0.5 + 0.5) * noise,
+      );
     }
     pts.push({ x: cx + dx * d, y: cy + dy * d });
   }
@@ -1807,11 +2226,11 @@ function fillCone(
 
 function coneAlpha(g: Guard, frame: number): number {
   switch (g.state) {
-    case 'CHASE':
+    case "CHASE":
       // 추격 중에는 세게 맥동시킨다 — 화면 어디를 보고 있어도 주변시로 잡힌다.
       return A_CONE_CHASE + 0.07 + Math.sin(frame * 0.32) * 0.11;
-    case 'SUSPICIOUS':
-    case 'INVESTIGATE':
+    case "SUSPICIOUS":
+    case "INVESTIGATE":
       return A_CONE_SUSPICIOUS + Math.sin(frame * 0.16) * 0.03;
     default:
       return A_CONE_PATROL;
@@ -1821,10 +2240,10 @@ function coneAlpha(g: Guard, frame: number): number {
 /** 상태별 시야콘 가장자리 노이즈 진폭. 쫓을수록 가장자리가 거칠어진다. */
 function coneNoise(g: Guard): number {
   switch (g.state) {
-    case 'CHASE':
+    case "CHASE":
       return CONE_NOISE[2];
-    case 'SUSPICIOUS':
-    case 'INVESTIGATE':
+    case "SUSPICIOUS":
+    case "INVESTIGATE":
       return CONE_NOISE[1];
     default:
       return CONE_NOISE[0];
@@ -1864,47 +2283,58 @@ function drawCctvs(
         // LOCK 가산치가 0.14 → 0.05 로 줄어든 건 약해진 게 아니다. 빔 색이 밝아져
         // 같은 알파에서 화면 밝기가 2.4배로 뛰므로, 예전 마젠타 LOCK 과 **같은 밝기**
         // (그리고 경비 CHASE 콘보다 살짝 아래)가 되도록 알파를 되맞춘 것이다.
-        locking ? A_CONE_CCTV + 0.05 + Math.sin(view.frame * 0.4) * 0.02 : A_CONE_CCTV,
+        locking
+          ? A_CONE_CCTV + 0.05 + Math.sin(view.frame * 0.4) * 0.02
+          : A_CONE_CCTV,
       );
     }
-    // 카메라 본체 — 하우징은 강철이고 **렌즈만** 빛난다. 꺼지면 회색으로 죽는다(레버 효과의 시각 증거).
+    // 카메라 본체. 시트는 8프레임 렌즈 스윕 + 9번째 **비활성** 프레임이다.
+    // 렌즈 위치는 시뮬의 facing 을 그대로 따라간다 — 그림이 보는 쪽과 실제
+    // 감시 방향이 어긋나면 플레이어가 안전한 자리를 잘못 고른다.
     const col = c.enabled ? C_CCTV : C_OFF;
-    const k = shadeAt(s, cx, cy);
-    contactShadow(ctx, cx, cy, 20, 0.85);
-    ctx.fillStyle = mulHex(C_METAL, k);
-    ctx.beginPath();
-    ctx.arc(cx, cy, 10, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 9.5, Math.PI, TAU);
-    ctx.stroke();
-    ctx.fillStyle = withAlpha(col, 0.95);
-    ctx.beginPath();
-    ctx.arc(cx, cy, 5.5, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = withAlpha(col, c.enabled ? 0.55 : 0.3);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 10, 0, TAU);
-    ctx.stroke();
-    if (!c.enabled) {
-      // 죽은 눈 위의 X. 남색(C_OFF)으로 그으면 금속 하우징 위에서 안 보인다.
-      ctx.strokeStyle = withAlpha(C_METAL_LIP, 0.9);
+    const eyeCol = c.enabled
+      ? ((Math.round((c.facing / DIR_STEPS) * 8) % 8) + 8) % 8
+      : 8;
+    if (!sprites.drawCentered(ctx, "eye", eyeCol, 0, cx, cy)) {
+      // 카메라 본체 — 하우징은 강철이고 **렌즈만** 빛난다. 꺼지면 회색으로 죽는다(레버 효과의 시각 증거).
+      const k = shadeAt(s, cx, cy);
+      contactShadow(ctx, cx, cy, 20, 0.85);
+      ctx.fillStyle = mulHex(C_METAL, k);
       ctx.beginPath();
-      ctx.moveTo(cx - 8, cy - 8);
-      ctx.lineTo(cx + 8, cy + 8);
+      ctx.arc(cx, cy, 10, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = withAlpha(mulHex(C_METAL_LIP, k), 0.7);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9.5, Math.PI, TAU);
       ctx.stroke();
+      ctx.fillStyle = withAlpha(col, 0.95);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5.5, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = withAlpha(col, c.enabled ? 0.55 : 0.3);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10, 0, TAU);
+      ctx.stroke();
+      if (!c.enabled) {
+        // 죽은 눈 위의 X. 남색(C_OFF)으로 그으면 금속 하우징 위에서 안 보인다.
+        ctx.strokeStyle = withAlpha(C_METAL_LIP, 0.9);
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy - 8);
+        ctx.lineTo(cx + 8, cy + 8);
+        ctx.stroke();
+      }
+      // EYE(감시안) — 꺼진 눈은 라벨까지 죽되, 강철 스텐실로 읽히는 선까지는 남긴다.
     }
-    // EYE(감시안) — 꺼진 눈은 라벨까지 죽되, 강철 스텐실로 읽히는 선까지는 남긴다.
+
     ctx.fillStyle = c.enabled
       ? withAlpha(col, 0.6)
       : withAlpha(C_METAL_LIP, 0.6);
-    ctx.font = font(7, 'bold');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('EYE', cx, cy + 19);
+    ctx.font = font(7, "bold");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("EYE", cx, cy + 19);
   }
 }
 
@@ -1914,7 +2344,10 @@ function drawCctvs(
  * 보정한다 — 시야 **경계**가 곧 회피 정보라, 거기가 톱니로 보이면 안 된다.
  */
 function coneRays(halfAngle: number, rangePx: number): number {
-  return Math.max(14, Math.round(((halfAngle * 2) / 0.0671) * Math.sqrt(rangePx / 224)));
+  return Math.max(
+    14,
+    Math.round(((halfAngle * 2) / 0.0671) * Math.sqrt(rangePx / 224)),
+  );
 }
 
 function drawGuardCones(
@@ -1949,7 +2382,11 @@ function drawGuardCones(
     );
     // 경보 중에는 콘 전체가 세게 점멸한다 — 채우기만 밝아질 뿐 **넓어지지는 않는다.**
     const flick =
-      alarmFx > 0 ? 0.2 * (alarmFx / ALARM_FX_TICKS) * (0.55 + Math.sin(view.frame * 0.9) * 0.45) : 0;
+      alarmFx > 0
+        ? 0.2 *
+          (alarmFx / ALARM_FX_TICKS) *
+          (0.55 + Math.sin(view.frame * 0.9) * 0.45)
+        : 0;
     fillCone(ctx, cx, cy, pts, C_GUARD, coneAlpha(g, view.frame) + flick);
 
     // 경보 섬광: 콘 **안쪽**에서 바깥으로 훑고 지나가는 밝은 띠.
@@ -1972,7 +2409,7 @@ function drawGuardCones(
     }
 
     // 추격 중에는 콘 안쪽에 한 겹을 더 태운다 — 붉은 덩어리가 나를 향해 밀려온다.
-    if (g.state === 'CHASE') {
+    if (g.state === "CHASE") {
       const near = conePolygon(
         s,
         cx,
@@ -1984,7 +2421,14 @@ function drawGuardCones(
         CONE_NOISE[2],
         view.frame,
       );
-      fillCone(ctx, cx, cy, near, C_GUARD, 0.1 + Math.sin(view.frame * 0.32) * 0.05);
+      fillCone(
+        ctx,
+        cx,
+        cy,
+        near,
+        C_GUARD,
+        0.1 + Math.sin(view.frame * 0.32) * 0.05,
+      );
     }
   }
 }
@@ -2039,11 +2483,11 @@ function drawGoals(
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
   ctx.fillStyle = withAlpha(col, unlocked ? 1 : 0.65);
-  ctx.font = font(9, 'bold');
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
+  ctx.font = font(9, "bold");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
   // 코어를 되찾기 전까지 바깥 문은 SEALED 다 — 잠긴 게 아니라 봉인된 것이다.
-  ctx.fillText(unlocked ? 'EXIT' : 'SEALED', ex + ew / 2, ey + eh / 2);
+  ctx.fillText(unlocked ? "EXIT" : "SEALED", ex + ew / 2, ey + eh / 2);
 
   // CORE — 나를 묶어두던 억제 코어. 회전 마름모 + 맥동 글로우.
   // loot.x/y 는 바디 크기(BODY_SUB) AABB 좌상단이고, 운반 중에는 world.ts 가
@@ -2066,75 +2510,99 @@ function drawGoals(
     contactShadow(ctx, lx, ly + 8, 20 + lift * 6, 1 - lift * 0.35);
   }
 
-  ctx.save();
-  ctx.translate(lx, ly + bob);
-  // 억제 장치라 완전히 죽은 금속은 아니다 — 아주 옅은 잔광 한 겹만 남긴다(예전 0.42 → 0.14).
-  const gr = 18;
-  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
-  glow.addColorStop(0, withAlpha(C_LOOT, 0.14 + pulse * 0.06));
-  glow.addColorStop(1, withAlpha(C_LOOT, 0));
-  ctx.fillStyle = glow;
-  ctx.fillRect(-gr, -gr, gr * 2, gr * 2);
+  // 회전은 **에셋이 이미 8프레임으로 갖고 있다.** 시뮬의 회전 상태와 무관하게
+  // 6프레임마다 한 칸씩 부드럽게 돌린다(README C그룹 규격: "one full smooth
+  // rotation, constant size, no trail"). 잔광 한 겹은 코드가 계속 얹는다 —
+  // 억제 장치라 완전히 죽은 금속은 아니라는 표시다.
+  if (sprites.has("core")) {
+    ctx.save();
+    ctx.translate(lx, ly + bob);
+    const gr = 18;
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
+    glow.addColorStop(0, withAlpha(C_LOOT, 0.14 + pulse * 0.06));
+    glow.addColorStop(1, withAlpha(C_LOOT, 0));
+    ctx.fillStyle = glow;
+    ctx.fillRect(-gr, -gr, gr * 2, gr * 2);
+    ctx.restore();
+    sprites.drawCentered(
+      ctx,
+      "core",
+      Math.floor(view.frame / 6) % 8,
+      0,
+      lx,
+      ly + bob,
+    );
+  } else {
+    ctx.save();
+    ctx.translate(lx, ly + bob);
+    // 억제 장치라 완전히 죽은 금속은 아니다 — 아주 옅은 잔광 한 겹만 남긴다(예전 0.42 → 0.14).
+    const gr = 18;
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, gr);
+    glow.addColorStop(0, withAlpha(C_LOOT, 0.14 + pulse * 0.06));
+    glow.addColorStop(1, withAlpha(C_LOOT, 0));
+    ctx.fillStyle = glow;
+    ctx.fillRect(-gr, -gr, gr * 2, gr * 2);
 
-  // 바깥 껍질: 반대로 도는 마름모 링. 어두운 금속 테라서 하이라이트만 반짝인다.
-  ctx.save();
-  ctx.rotate(-spin * 0.6);
-  const outer = 13;
-  ctx.strokeStyle = withAlpha(mulHex(C_LOOT_DARK, k), 0.95);
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, -outer);
-  ctx.lineTo(outer, 0);
-  ctx.lineTo(0, outer);
-  ctx.lineTo(-outer, 0);
-  ctx.closePath();
-  ctx.stroke();
-  // 위쪽 두 변만 빛을 받는다 — 링이 입체로 읽히는 이유가 이 반쪽이다.
-  ctx.strokeStyle = withAlpha(mulHex(C_LOOT_LIT, k), 0.5 + pulse * 0.25);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(-outer, 0);
-  ctx.lineTo(0, -outer);
-  ctx.lineTo(outer, 0);
-  ctx.stroke();
-  ctx.restore();
+    // 바깥 껍질: 반대로 도는 마름모 링. 어두운 금속 테라서 하이라이트만 반짝인다.
+    ctx.save();
+    ctx.rotate(-spin * 0.6);
+    const outer = 13;
+    ctx.strokeStyle = withAlpha(mulHex(C_LOOT_DARK, k), 0.95);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -outer);
+    ctx.lineTo(outer, 0);
+    ctx.lineTo(0, outer);
+    ctx.lineTo(-outer, 0);
+    ctx.closePath();
+    ctx.stroke();
+    // 위쪽 두 변만 빛을 받는다 — 링이 입체로 읽히는 이유가 이 반쪽이다.
+    ctx.strokeStyle = withAlpha(mulHex(C_LOOT_LIT, k), 0.5 + pulse * 0.25);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-outer, 0);
+    ctx.lineTo(0, -outer);
+    ctx.lineTo(outer, 0);
+    ctx.stroke();
+    ctx.restore();
 
-  ctx.rotate(spin);
-  // 몸통: 왼쪽 위(빛)에서 오른쪽 아래(그늘)로 흐르는 금속 그라디언트.
-  const body = ctx.createLinearGradient(-6, -8, 6, 8);
-  body.addColorStop(0, mulHex(C_LOOT_LIT, k));
-  body.addColorStop(0.45, mulHex(C_LOOT, k));
-  body.addColorStop(1, mulHex(C_LOOT_DARK, k));
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(7, 0);
-  ctx.lineTo(0, 8);
-  ctx.lineTo(-7, 0);
-  ctx.closePath();
-  ctx.fill();
-  // 그늘진 아래쪽 두 변 = 오클루전 에지. 이게 없으면 다시 납작한 네온 마름모가 된다.
-  ctx.strokeStyle = withAlpha(C_BG, 0.55);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(7, 0);
-  ctx.lineTo(0, 8);
-  ctx.lineTo(-7, 0);
-  ctx.stroke();
-  // 스페큘러 — 위쪽 모서리에 걸린 짧은 하이라이트 한 획.
-  ctx.strokeStyle = withAlpha(mulHex(C_LOOT_LIT, k), 0.9);
-  ctx.beginPath();
-  ctx.moveTo(-4.5, -3.5);
-  ctx.lineTo(-0.5, -7.5);
-  ctx.stroke();
-  ctx.restore();
+    ctx.rotate(spin);
+    // 몸통: 왼쪽 위(빛)에서 오른쪽 아래(그늘)로 흐르는 금속 그라디언트.
+    const body = ctx.createLinearGradient(-6, -8, 6, 8);
+    body.addColorStop(0, mulHex(C_LOOT_LIT, k));
+    body.addColorStop(0.45, mulHex(C_LOOT, k));
+    body.addColorStop(1, mulHex(C_LOOT_DARK, k));
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(7, 0);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-7, 0);
+    ctx.closePath();
+    ctx.fill();
+    // 그늘진 아래쪽 두 변 = 오클루전 에지. 이게 없으면 다시 납작한 네온 마름모가 된다.
+    ctx.strokeStyle = withAlpha(C_BG, 0.55);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(7, 0);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-7, 0);
+    ctx.stroke();
+    // 스페큘러 — 위쪽 모서리에 걸린 짧은 하이라이트 한 획.
+    ctx.strokeStyle = withAlpha(mulHex(C_LOOT_LIT, k), 0.9);
+    ctx.beginPath();
+    ctx.moveTo(-4.5, -3.5);
+    ctx.lineTo(-0.5, -7.5);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   if (carrier === undefined) {
     ctx.fillStyle = withAlpha(C_LOOT_LIT, 0.55 + pulse * 0.25);
-    ctx.font = font(7, 'bold');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('CORE', lx, ly + 20);
+    ctx.font = font(7, "bold");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("CORE", lx, ly + 20);
   }
 }
 
@@ -2303,7 +2771,9 @@ function frozenMark(
 }
 
 function overlaps(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  return (
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+  );
 }
 
 /**
@@ -2321,10 +2791,10 @@ function drawSlotLabels(
 ): void {
   if (jobs.length === 0) return;
   ctx.save();
-  ctx.font = font(8, 'bold');
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.lineJoin = 'round';
+  ctx.font = font(8, "bold");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.lineJoin = "round";
   ctx.setLineDash([]);
 
   // 라벨이 절대 침범하면 안 되는 영역 = 모든 몸. 이제 인물이 AABB 위로 솟으므로
@@ -2427,37 +2897,49 @@ function drawGhosts(
     facingPip(ctx, cx, cy, b.facing, withAlpha(col, baseA + 0.25), 16, 5);
 
     const gait = view.gaits.get(b.id);
-    drawTopFigure(
-      ctx,
-      cx,
-      cy,
-      FIG_W * gaitLift(gait),
-      // frozen 이면 stepGait 가 갱신을 멈춰 방향도 자세도 마지막 걸음에 얼어붙어 있다.
-      gait?.drawAng ?? angleOf(b.facing),
-      topPose({
-        phase: gait?.phase ?? 0,
-        run: gait?.run ?? 0,
-        motion: gait?.motion ?? 0,
-        lean: leanOf(gait),
-        hairMass: 0.6,
-      }),
-      {
+    // 잔상은 같은 시트에 **코드로 색과 알파를 입혀** 쓴다. 4색을 따로 만들면
+    // 톤이 어긋난다(DESIGN-PROMPTS B1 구현 메모).
+    if (
+      !drawBodySprite(ctx, "player", cx, cy, b.facing, gait, {
         color: col,
-        // 슬롯 알파를 그대로 쓰되 실루엣 합성이라 부위 경계가 생기지 않는다.
         alpha: Math.min(1, baseA + 0.12),
-        bulk: BULK_BODY,
-        inkSeed: 400 + b.slot * 97,
-        style: 'silhouette',
-        shade: C_BG,
-      },
-    );
+      })
+    ) {
+      drawTopFigure(
+        ctx,
+        cx,
+        cy,
+        FIG_W * gaitLift(gait),
+        // frozen 이면 stepGait 가 갱신을 멈춰 방향도 자세도 마지막 걸음에 얼어붙어 있다.
+        gait?.drawAng ?? angleOf(b.facing),
+        topPose({
+          phase: gait?.phase ?? 0,
+          run: gait?.run ?? 0,
+          motion: gait?.motion ?? 0,
+          lean: leanOf(gait),
+          hairMass: 0.6,
+        }),
+        {
+          color: col,
+          // 슬롯 알파를 그대로 쓰되 실루엣 합성이라 부위 경계가 생기지 않는다.
+          alpha: Math.min(1, baseA + 0.12),
+          bulk: BULK_BODY,
+          inkSeed: 400 + b.slot * 97,
+          style: "silhouette",
+          shade: C_BG,
+        },
+      );
+    }
 
     if (b.frozen) {
       frozenMark(ctx, cx, top, cy + FIG_R, col, Math.min(1, baseA + 0.4));
     }
 
     if (b.spotted) {
-      ctx.strokeStyle = withAlpha(C_GUARD, 0.5 + Math.sin(view.frame * 0.3) * 0.25);
+      ctx.strokeStyle = withAlpha(
+        C_GUARD,
+        0.5 + Math.sin(view.frame * 0.3) * 0.25,
+      );
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(cx, cy, BODY_SIZE * 0.85, 0, Math.PI * 2);
@@ -2466,7 +2948,7 @@ function drawGhosts(
 
     // 머리 위 슬롯 라벨 (MY / ME / MINE). 배치는 몸을 다 그린 뒤 한꺼번에 — 겹침 회피.
     labels.push({
-      text: SLOT_NAMES[b.slot] ?? '?',
+      text: SLOT_NAMES[b.slot] ?? "?",
       cx,
       baseY: top - 4,
       color: col,
@@ -2505,24 +2987,32 @@ function drawCorpse(
   // 서 있는 몸과 **같은 작도법**이되 `sprawl: 1` 이라 머리 원이 몸통 타원 옆으로 빠지고
   // 다리가 벌어진다. 위에서 본 사람이 서 있지 않다는 걸 그 배치 하나가 말한다 —
   // 회색 + 낮은 알파까지 더해 살아 있는 잔상과 한 프레임도 헷갈리지 않는다.
-  drawTopFigure(ctx, cx, restY, FIG_W, angleOf(b.facing), {
-    shoulderTwist: 0.55,
-    hipTwist: -0.32,
-    armL: 0.85,
-    armR: -0.55,
-    lean: 0,
-    footL: 0.45,
-    footR: -0.6,
-    hairMass: 0.6,
-    sprawl: 1,
-  }, {
-    color: C_CORPSE,
-    alpha: Math.min(1, a * 2.1),
-    bulk: BULK_BODY,
-    inkSeed: 700 + b.slot * 31,
-    shade: C_BG,
-    style: 'silhouette',
-  });
+  drawTopFigure(
+    ctx,
+    cx,
+    restY,
+    FIG_W,
+    angleOf(b.facing),
+    {
+      shoulderTwist: 0.55,
+      hipTwist: -0.32,
+      armL: 0.85,
+      armR: -0.55,
+      lean: 0,
+      footL: 0.45,
+      footR: -0.6,
+      hairMass: 0.6,
+      sprawl: 1,
+    },
+    {
+      color: C_CORPSE,
+      alpha: Math.min(1, a * 2.1),
+      bulk: BULK_BODY,
+      inkSeed: 700 + b.slot * 31,
+      shade: C_BG,
+      style: "silhouette",
+    },
+  );
 
   // 십자 마커 — 쓰러진 몸 위에 얹어 "실패한 자리"를 못 박는다.
   ctx.strokeStyle = withAlpha(C_CORPSE, a * 2.4);
@@ -2535,7 +3025,7 @@ function drawCorpse(
   ctx.stroke();
 
   labels.push({
-    text: SLOT_NAMES[b.slot] ?? '?',
+    text: SLOT_NAMES[b.slot] ?? "?",
     cx,
     baseY: y - 5,
     color: C_CORPSE,
@@ -2563,7 +3053,7 @@ function drawGuards(
     /** 네발 유형은 그림자도 몸을 따라 길쭉하게 눕는다(30 : 13 = 몸통 28 : 14 와 같은 비). */
     const quad = TOP_BUILD[g.kind].quad === true;
 
-    if (g.state === 'CHASE') {
+    if (g.state === "CHASE") {
       const pulse = 0.3 + Math.sin(view.frame * 0.3) * 0.16;
       const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, size * 1.5);
       halo.addColorStop(0, withAlpha(C_GUARD, pulse));
@@ -2573,41 +3063,62 @@ function drawGuards(
     }
 
     floorTint(ctx, cx, cy, size * 0.9, C_GUARD, 0.26);
-    contactShadow(ctx, cx, cy, guardShadowW(g), 1, quad ? drawAng : 0, quad ? 30 / 13 : 1);
-    // 꺾쇠는 실루엣 밖에 놓는다. 고정 24px 로 두면 BRUTE(어깨 51)의 몸 **안쪽**에 찍혀
-    // 방향 정보가 실루엣에 먹히고, WATCHER 는 삼각대 다리 위에 겹친다.
-    facingPip(ctx, cx, cy, g.facing, '#ffb0a8', drawR + 5, 7);
-
-    // 유형은 **형태로만** 갈린다(색은 상태가 쓴다). 몸 크기는 시뮬의 충돌 박스에서
-    // 파생되므로 BRUTE 는 화면에서도 실제로 압도적이다 — 어깨 51px 대 SENTRY 28px.
-    drawTopFigure(
+    contactShadow(
       ctx,
       cx,
       cy,
-      guardFigU(g) * gaitLift(gg),
-      drawAng,
-      topPose({
-        phase: gg?.phase ?? 0,
-        run: gg?.run ?? 0,
-        motion: gg?.motion ?? 0,
-        lean: leanOf(gg),
-        build: g.kind,
-      }),
-      {
-        color: C_GUARD,
-        outline: '#ff9a90',
-        shade: '#2a0d0b',
-        bulk: BULK_GUARD,
-        inkSeed: 900 + g.id * 17,
-      },
+      guardShadowW(g),
+      1,
+      quad ? drawAng : 0,
+      quad ? 30 / 13 : 1,
     );
+    // 꺾쇠는 실루엣 밖에 놓는다. 고정 24px 로 두면 BRUTE(어깨 51)의 몸 **안쪽**에 찍혀
+    // 방향 정보가 실루엣에 먹히고, WATCHER 는 삼각대 다리 위에 겹친다.
+    facingPip(ctx, cx, cy, g.facing, "#ffb0a8", drawR + 5, 7);
+
+    // 유형은 **형태로만** 갈린다(색은 상태가 쓴다). 몸 크기는 시뮬의 충돌 박스에서
+    // 파생되므로 BRUTE 는 화면에서도 실제로 압도적이다 — 어깨 51px 대 SENTRY 28px.
+    // 유형 → 시트는 이름으로 잇는다. 배열 인덱스로 이으면 레벨에서 유형 순서가
+    // 바뀌는 순간 HOUND 가 사람처럼 걷는 사고가 난다.
+    if (
+      !drawBodySprite(
+        ctx,
+        GUARD_SHEET[g.kind] ?? "sentry",
+        cx,
+        cy,
+        g.facing,
+        gg,
+      )
+    ) {
+      drawTopFigure(
+        ctx,
+        cx,
+        cy,
+        guardFigU(g) * gaitLift(gg),
+        drawAng,
+        topPose({
+          phase: gg?.phase ?? 0,
+          run: gg?.run ?? 0,
+          motion: gg?.motion ?? 0,
+          lean: leanOf(gg),
+          build: g.kind,
+        }),
+        {
+          color: C_GUARD,
+          outline: "#ff9a90",
+          shade: "#2a0d0b",
+          bulk: BULK_GUARD,
+          inkSeed: 900 + g.id * 17,
+        },
+      );
+    }
 
     // 경보를 울리는 순간의 몸 신호: 흰빛으로 달아오르는 링 두 겹.
     // 방사 링(`view.rings`)은 사방으로 퍼지고, 이건 **누가** 울렸는지를 못 박는다.
     if (alarmFx > 0) {
       const t = 1 - alarmFx / ALARM_FX_TICKS;
       const blink = 0.55 + Math.sin(view.frame * 0.9) * 0.45;
-      ctx.strokeStyle = withAlpha('#ffd9d2', (1 - t) * blink * 0.95);
+      ctx.strokeStyle = withAlpha("#ffd9d2", (1 - t) * blink * 0.95);
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(cx, cy, drawR + t * 6, 0, TAU);
@@ -2624,37 +3135,97 @@ function drawGuards(
     if (g.detect > 0) {
       const w = Math.max(26, shoulder * 0.9);
       const frac = Math.max(0, Math.min(1, g.detect / DETECT_MAX));
-      ctx.fillStyle = withAlpha('#000000', 0.6);
+      ctx.fillStyle = withAlpha("#000000", 0.6);
       ctx.fillRect(cx - w / 2, top - 8, w, 4);
-      ctx.fillStyle = frac >= 1 ? C_GUARD : frac >= 0.4 ? '#ffb057' : '#ffe08a';
+      ctx.fillStyle = frac >= 1 ? C_GUARD : frac >= 0.4 ? "#ffb057" : "#ffe08a";
       ctx.fillRect(cx - w / 2, top - 8, w * frac, 4);
     }
 
     const tag =
-      g.state === 'CHASE'
-        ? '!'
-        : g.state === 'SUSPICIOUS' || g.state === 'INVESTIGATE'
-          ? '?'
-          : '';
-    if (tag !== '') {
+      g.state === "CHASE"
+        ? "!"
+        : g.state === "SUSPICIOUS" || g.state === "INVESTIGATE"
+          ? "?"
+          : "";
+    if (tag !== "") {
       ctx.fillStyle = C_GUARD;
-      ctx.font = font(13, 'bold');
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'alphabetic';
+      ctx.font = font(13, "bold");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
       ctx.fillText(tag, cx, top - 12);
     }
 
     // 유형 이름. 감지 게이지와 !/? 는 위쪽을 이미 쓰고 있으니 라벨은 발밑에.
     // 실루엣이 아직 안 외워진 플레이어에게는 이 한 줄이 유일한 확답이다.
     ctx.fillStyle = withAlpha(C_GUARD, 0.5);
-    ctx.font = font(7, 'bold');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
+    ctx.font = font(7, "bold");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
     ctx.fillText(g.kind, cx, cy + drawR + 9);
   }
 }
 
 /** 조작 중인 몸(I). 항상 최상단, 항상 불투명. */
+/**
+ * 몸(주인공·잔상·경비)을 스프라이트로 그린다. 시트가 없으면 false 를 돌려
+ * 호출부가 기존 코드 드로잉으로 떨어지게 한다.
+ *
+ * **판정은 한 톨도 건드리지 않는다.** 그리는 자리는 시뮬이 준 `cx`/`cy` 그대로고,
+ * 방향은 `facing` 을 그대로 읽는다. 스프라이트가 충돌 박스보다 커 보여도 박스를
+ * 늘리지 않고 그림만 그 자리에 놓는다.
+ *
+ * 걸음 프레임은 `Gait.phase`(이동 **거리**로만 자라는 위상)에서 뽑는다. 그래서
+ * 멈추면 프레임도 멈추고, 달리면 저절로 빨라지며, frozen 잔상은 마지막 걸음에서
+ * 굳는다 — 코드 드로잉이 이미 갖고 있던 성질을 그대로 물려받는다.
+ */
+function drawBodySprite(
+  ctx: CanvasRenderingContext2D,
+  id: sprites.SpriteId,
+  cx: number,
+  cy: number,
+  facing: number,
+  gait: Gait | undefined,
+  tint?: { color: string; alpha: number },
+): boolean {
+  if (!sprites.has(id)) return false;
+  const row = sprites.rowOfFacing(facing);
+  const moving = (gait?.motion ?? 0) > 0.05;
+  const turns = (gait?.phase ?? 0) / (Math.PI * 2);
+  const col = moving ? ((Math.floor(turns * 8) % 8) + 8) % 8 : 0;
+  // 셀 가운데가 아니라 **발밑**을 몸 중심에 맞춘다. 시트의 인물은 셀 아래쪽에
+  // 서 있어서 가운데로 놓으면 바닥에서 떠 보인다.
+  const cell = sprites.cellOf(id);
+  const dy = cell === undefined ? 0 : cell.h * 0.12;
+  if (tint !== undefined) {
+    return sprites.drawTinted(
+      ctx,
+      id,
+      col,
+      row,
+      cx,
+      cy - dy,
+      tint.color,
+      tint.alpha,
+    );
+  }
+  return sprites.draw(
+    ctx,
+    id,
+    col,
+    row,
+    cx - (cell?.w ?? 0) / 2,
+    cy - dy - (cell?.h ?? 0) / 2,
+  );
+}
+
+/** 경비 유형 → 시트 아이디. 파일명 순서가 아니라 **유형 이름**으로 잇는다. */
+const GUARD_SHEET: Readonly<Record<string, sprites.SpriteId>> = {
+  SENTRY: "sentry",
+  HOUND: "hound",
+  BRUTE: "brute",
+  WATCHER: "watcher",
+};
+
 function drawLive(
   ctx: CanvasRenderingContext2D,
   s: SimState,
@@ -2692,36 +3263,38 @@ function drawLive(
 
   // 흰 코어 + 시안 림라이트. 화면에서 가장 밝고, drawWorld 순서상 가장 위 레이어다.
   const gait = view.gaits.get(b.id);
-  drawTopFigure(
-    ctx,
-    cx,
-    cy,
-    FIG_W * gaitLift(gait),
-    gait?.drawAng ?? angleOf(b.facing),
-    topPose({
-      phase: gait?.phase ?? 0,
-      run: gait?.run ?? 0,
-      motion: gait?.motion ?? 0,
-      lean: leanOf(gait),
-      hairMass: 0.6,
-    }),
-    {
-      color: C_I_CORE,
-      outline: C_I_RING,
-      shade: '#0a1018',
-      bulk: BULK_BODY,
-      inkSeed: 401,
-    },
-  );
+  if (!drawBodySprite(ctx, "player", cx, cy, b.facing, gait)) {
+    drawTopFigure(
+      ctx,
+      cx,
+      cy,
+      FIG_W * gaitLift(gait),
+      gait?.drawAng ?? angleOf(b.facing),
+      topPose({
+        phase: gait?.phase ?? 0,
+        run: gait?.run ?? 0,
+        motion: gait?.motion ?? 0,
+        lean: leanOf(gait),
+        hairMass: 0.6,
+      }),
+      {
+        color: C_I_CORE,
+        outline: C_I_RING,
+        shade: "#0a1018",
+        bulk: BULK_BODY,
+        inkSeed: 401,
+      },
+    );
+  }
 
   // 바깥 펄스 링은 없앴다. 접지 링과 합쳐 동심원 두 겹이 되는 순간 인물이 표적 마커로
   // 읽히고, 정작 머리와 어깨가 안 보인다. 밀집 상황의 식별은 링 하나 + 머리 위 `I` 로 한다.
 
   ctx.fillStyle = C_I_CORE;
-  ctx.font = font(9, 'bold');
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText('I', cx, top - 4);
+  ctx.font = font(9, "bold");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText("I", cx, top - 4);
 }
 
 /**
