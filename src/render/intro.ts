@@ -1494,6 +1494,25 @@ const PAINT: ReadonlyArray<(g: CanvasRenderingContext2D, r: Rect, t: number) => 
 const PAGE_SCENE = ['introPage1', 'introPage2', 'introPage3'] as const;
 
 /**
+ * 만화 정본의 **실제 칸 좌표**. 칸 index(0..6) 순서다.
+ *
+ * 코드 드로잉의 `PANELS` 와 다르다 — 그쪽은 코드로 그리던 시절의 배치이고,
+ * 만화는 자기 흰 테두리를 따로 갖고 있다. 코드 쪽 사각형으로 자르면 만화의
+ * 칸 경계와 몇 픽셀씩 어긋나 위 칸 자락이 아래로 새어 나온다.
+ *
+ * 값은 납품본 PNG 에서 흰 테두리를 연결 성분으로 찾아 실측한 것이다.
+ */
+const COMIC_PANELS: readonly Rect[] = [
+  { x: 5, y: 6, w: 950, h: 237 }, // 1p 위 — 낯선 천장
+  { x: 6, y: 249, w: 469, h: 344 }, // 1p 아래 왼 — 벽의 금
+  { x: 481, y: 249, w: 474, h: 344 }, // 1p 아래 오 — 손잡이 없는 문
+  { x: 9, y: 9, w: 450, h: 292 }, // 2p 위 왼 — 발현
+  { x: 468, y: 9, w: 482, h: 292 }, // 2p 위 오 — 되풀이
+  { x: 9, y: 308, w: 941, h: 283 }, // 2p 아래 — 발판과 문
+  { x: 5, y: 5, w: 949, h: 588 }, // 3p 전면 — 넷
+];
+
+/**
  * 만화 정본 페이지를 **칸 하나만큼** 잘라 그린다.
  *
  * 페이지 이미지는 960×600 통짜라 그냥 깔면 아직 안 나온 칸까지 한꺼번에 보인다.
@@ -1502,11 +1521,13 @@ const PAGE_SCENE = ['introPage1', 'introPage2', 'introPage3'] as const;
  *
  * 좌표계가 같아서(둘 다 960×600) 잘라 낼 자리와 놓을 자리가 정확히 일치한다.
  */
-function panelImage(g: CanvasRenderingContext2D, page: number, r: Rect): boolean {
+function panelImage(g: CanvasRenderingContext2D, page: number, cut: number): Rect | null {
   const img = sprites.scene(PAGE_SCENE[page] ?? 'introPage1');
-  if (img === undefined) return false;
+  if (img === undefined) return null;
+  const r = COMIC_PANELS[cut];
+  if (r === undefined) return null;
   g.drawImage(img, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
-  return true;
+  return r;
 }
 
 function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void {
@@ -1522,22 +1543,25 @@ function drawPage(g: CanvasRenderingContext2D, page: number, tick: number): void
     const p = clamp01(local / REVEAL_TICKS);
     const r = PANELS[i]!;
 
+    // 만화 정본이 있으면 **만화의 칸 좌표로** 자르고, 없으면 예전 코드 드로잉을 쓴다.
+    const comic = panelImage(g, page, i);
+    const box = comic ?? r;
     g.save();
-    g.beginPath();
-    g.rect(r.x, r.y, r.w, r.h);
-    g.clip();
-    // 만화 정본이 있으면 그것을, 없으면 예전 코드 드로잉을 쓴다.
-    const usedImage = panelImage(g, page, r);
-    if (!usedImage) PAINT[i]!(g, r, local);
-    inkWipe(g, r, p, 700 + i);
+    if (comic === null) {
+      g.beginPath();
+      g.rect(r.x, r.y, r.w, r.h);
+      g.clip();
+      PAINT[i]!(g, r, local);
+    }
+    inkWipe(g, box, p, 700 + i);
     g.restore();
 
     // 칸 4 의 빛만 테두리를 넘어 거터로 번진다.
     if (i === 3 && p > 0.55) panel4Spill(g, r, local);
 
-    // 칸 7 은 전면(full-bleed) 이라 테두리를 두르지 않는다.
-    // 만화 정본에는 손으로 그은 테두리가 이미 있으므로 그때도 덧그리지 않는다.
-    if (i !== 6 && !usedImage) panelBorder(g, r, 100 + i, clamp01((p - 0.12) / 0.35));
+    // 칸 7 은 전면(full-bleed) 이라 테두리를 두르지 않는다. 만화를 쓸 때도
+    // 손으로 그은 듯한 흰 테두리는 그대로 두른다 — 만화책 느낌은 이 선이 만든다.
+    if (i !== 6) panelBorder(g, box, 100 + i, clamp01((p - 0.12) / 0.35));
   }
 }
 

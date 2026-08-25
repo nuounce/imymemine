@@ -1403,9 +1403,31 @@ const INTERLUDE_SCENE = ['interlude1', 'interlude2', 'interlude3', 'interlude4']
  * 위·아래 두 띠로 전체 폭을 쓴다. 코드 쪽 사각형으로 자르면 만화의 칸 옆구리가
  * 잘려 검은 띠가 남는다. 그래서 만화를 쓸 때는 화면을 반으로 나눈 띠로 연다.
  */
-const COMIC_BAND: readonly Rect[] = [
-  { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H / 2 },
-  { x: 0, y: CANVAS_H / 2, w: CANVAS_W, h: CANVAS_H / 2 },
+/**
+ * 막간 만화의 **실제 칸 좌표** — [막간 id][컷]. 납품본 PNG 에서 실측했다.
+ * 화면을 반으로 나눈 띠로 열면 만화의 흰 테두리와 어긋나므로 칸을 그대로 쓴다.
+ */
+const COMIC_PANELS: readonly (readonly Rect[])[] = [
+  // 1 문 바깥쪽 — 위 와이드 / 아래 오른쪽
+  [
+    { x: 12, y: 11, w: 934, h: 307 },
+    { x: 408, y: 329, w: 538, h: 257 },
+  ],
+  // 2 선반 — 위 와이드 / 아래 오른쪽
+  [
+    { x: 20, y: 10, w: 919, h: 290 },
+    { x: 319, y: 310, w: 620, h: 268 },
+  ],
+  // 3 셈 — 위 와이드 / 아래 가운데
+  [
+    { x: 22, y: 12, w: 918, h: 348 },
+    { x: 196, y: 376, w: 570, h: 202 },
+  ],
+  // 4 마지막 문 — 왼쪽 세로 / 오른쪽 아래
+  [
+    { x: 8, y: 6, w: 337, h: 582 },
+    { x: 353, y: 156, w: 599, h: 432 },
+  ],
 ];
 
 function interludeImage(g: CanvasRenderingContext2D, id: number, cut: number): Rect | null {
@@ -1413,9 +1435,10 @@ function interludeImage(g: CanvasRenderingContext2D, id: number, cut: number): R
   if (key === undefined) return null;
   const img = sprites.scene(key);
   if (img === undefined) return null;
-  const b = COMIC_BAND[cut === 0 ? 0 : 1]!;
-  g.drawImage(img, b.x, b.y, b.w, b.h, b.x, b.y, b.w, b.h);
-  return b;
+  const r = COMIC_PANELS[id]?.[cut === 0 ? 0 : 1];
+  if (r === undefined) return null;
+  g.drawImage(img, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+  return r;
 }
 
 export function drawInterlude(
@@ -1452,11 +1475,9 @@ export function drawInterlude(
     inkWipe(g, clipR, p, 3700 + s.id * 8 + i);
     g.restore();
 
-    // 만화 정본에는 손으로 그은 칸 테두리가 이미 그려져 있다. 코드 테두리를
-    // 덧그리면 두 겹이 되어 지저분해지므로, 이미지를 쓸 때는 생략한다.
-    if (band === null) {
-      panelBorder(g, r, 3100 + s.id * 8 + i, clamp01((p - 0.12) / 0.35));
-    }
+    // 손으로 그은 듯한 흰 테두리는 만화를 쓸 때도 그대로 두른다 —
+    // 만화책 느낌은 이 선이 만든다. 다만 **만화의 칸 사각형**을 따라 두른다.
+    panelBorder(g, clipR, 3100 + s.id * 8 + i, clamp01((p - 0.12) / 0.35));
   }
 
   drawOverlay(g, tick, touch);
