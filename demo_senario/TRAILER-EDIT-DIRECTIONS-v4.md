@@ -156,6 +156,10 @@
       **A단조 120bpm 통일 + 20~22s 전개형("evolving")**으로 재생성(SEC1~SEC4 + 기존 B).
       섹션 경계 4곳(16.0/47.6/63.3/79.3s)에 라이저→임팩트 FX(히트=파일 0.4s 지점,
       경계-0.45s에 배치). 섹션별 −18 LUFS 내외 균일, 전체 −18.0 LUFS
+- [x] 7-9. 덕킹 완화 — "나레이션이 BGM을 잡아먹는다" 피드백: sidechaincompress를
+      threshold 0.03/ratio 5 → **0.12/ratio 2**(attack 120, release 400)로 조정, 말 중에도
+      BGM이 유지. 추가 발견: alimiter는 기본 level 옵션이 출력물을 도로 0dB로 끌어올린다 —
+      **level=disabled** 필수(피크 −1.0dB 확보)
 
 ## §R 파이프라인 레퍼런스 (새 세션 필독 — 이것만 알면 전부 재현 가능)
 
