@@ -160,6 +160,7 @@
       threshold 0.03/ratio 5 → **0.12/ratio 2**(attack 120, release 400)로 조정, 말 중에도
       BGM이 유지. 추가 발견: alimiter는 기본 level 옵션이 출력물을 도로 0dB로 끌어올린다 —
       **level=disabled** 필수(피크 −1.0dB 확보)
+- [x] 7-10. 나레이션 +1.5dB(volume 1.19) 상향 — 덕킹 완화 후 균형 미세조정, 피크 −1dB 유지
 
 ## §R 파이프라인 레퍼런스 (새 세션 필독 — 이것만 알면 전부 재현 가능)
 
